@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+作为专业前端工程师，请使用Next.js 14和Tailwind CSS 3实现以下页面：
+[清晰描述页面功能]
+要求：
+1. 组件化设计，创建独立组件文件
+2. 使用App Router模式
+3. 响应式布局，支持移动端/桌面端
+4. 包含交互状态（hover/focus/active）
+5. 添加适当的动画过渡效果
+6. 使用最新ES6+语法
+7. 文件结构符合Next.js最佳实践
+
+8. 添加详细的JSX注释
