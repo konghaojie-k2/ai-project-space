@@ -3,13 +3,17 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { 
-  ChartBarIcon, 
-  DocumentTextIcon, 
-  ChatBubbleLeftRightIcon,
-  UserGroupIcon,
   ArrowRightIcon,
-  CheckCircleIcon
+  CloudArrowUpIcon,
+  ChatBubbleLeftRightIcon,
+  UsersIcon,
+  CpuChipIcon,
+  CheckCircleIcon,
+  DocumentTextIcon,
+  UserGroupIcon,
+  ChartBarIcon
 } from '@heroicons/react/24/outline'
+import MainNavbar from '@/components/layout/MainNavbar'
 
 // 功能特性数据
 const features = [
@@ -66,6 +70,7 @@ export default function HomePage() {
 
   return (
     <div className={`min-h-screen transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}>
+      <MainNavbar />
       {/* Hero Section */}
       <section className="relative bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800 text-white">
         <div className="absolute inset-0 bg-black bg-opacity-20"></div>
@@ -193,7 +198,7 @@ export default function HomePage() {
             立即体验AI加持的项目管理系统，提升团队协作效率
           </p>
           <Link 
-            href="/auth/register" 
+            href="/register" 
             className="btn bg-white text-primary-700 hover:bg-primary-50 px-8 py-4 text-lg font-semibold rounded-lg transition-all duration-300 transform hover:scale-105 inline-flex items-center"
           >
             免费注册

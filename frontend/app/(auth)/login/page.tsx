@@ -1,19 +1,46 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { EyeIcon, EyeSlashIcon, EnvelopeIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
+import { useUserActions, useUserLoading, useUserError } from '@/lib/stores/userStore'
+import { useNotify } from '@/lib/stores/appStore'
 
 export default function LoginPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const notify = useNotify()
+  
+  // Zustand状态
+  const { login, clearError } = useUserActions()
+  const isLoading = useUserLoading()
+  const error = useUserError()
+  
+  // 本地状态
   const [formData, setFormData] = useState({
     email: '',
     password: ''
   })
   const [showPassword, setShowPassword] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  // 检查URL参数中的消息
+  useEffect(() => {
+    const message = searchParams.get('message')
+    if (message) {
+      notify.success('注册成功', message)
+    }
+  }, [searchParams, notify])
+
+  // 清除错误信息
+  useEffect(() => {
+    return () => {
+      clearError()
+    }
+  }, [clearError])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -21,12 +48,18 @@ export default function LoginPage() {
       ...prev,
       [name]: value
     }))
+    
     // 清除对应字段的错误
-    if (errors[name]) {
-      setErrors(prev => ({
+    if (formErrors[name]) {
+      setFormErrors(prev => ({
         ...prev,
         [name]: ''
       }))
+    }
+    
+    // 清除全局错误
+    if (error) {
+      clearError()
     }
   }
 
@@ -45,7 +78,7 @@ export default function LoginPage() {
       newErrors.password = '密码至少6位'
     }
     
-    setErrors(newErrors)
+    setFormErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
@@ -54,22 +87,19 @@ export default function LoginPage() {
     
     if (!validateForm()) return
     
-    setIsLoading(true)
-    
     try {
-      // 模拟登录请求
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      await login({
+        email: formData.email,
+        password: formData.password
+      })
       
-      // TODO: 实际登录逻辑
-      console.log('登录数据:', formData)
+      // 登录成功，显示通知并跳转
+      notify.success('登录成功', '欢迎回到AI项目管理系统')
+      router.push('/dashboard')
       
-      // 登录成功后跳转
-      window.location.href = '/dashboard'
     } catch (error) {
+      // 错误已经在store中处理，这里可以添加额外的错误处理
       console.error('登录失败:', error)
-      setErrors({ general: '登录失败，请检查用户名和密码' })
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -89,10 +119,10 @@ export default function LoginPage() {
 
         {/* 登录表单 */}
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          {/* 通用错误信息 */}
-          {errors.general && (
+          {/* 全局错误信息 */}
+          {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {errors.general}
+              {error}
             </div>
           )}
 
@@ -105,7 +135,7 @@ export default function LoginPage() {
               placeholder="请输入邮箱地址"
               value={formData.email}
               onChange={handleInputChange}
-              error={errors.email}
+              error={formErrors.email}
               leftIcon={<EnvelopeIcon />}
               required
             />
@@ -118,7 +148,7 @@ export default function LoginPage() {
               placeholder="请输入密码"
               value={formData.password}
               onChange={handleInputChange}
-              error={errors.password}
+              error={formErrors.password}
               leftIcon={<LockClosedIcon />}
               rightIcon={
                 <button
@@ -149,7 +179,7 @@ export default function LoginPage() {
 
             <div className="text-sm">
               <Link 
-                href="/auth/forgot-password" 
+                href="/forgot-password" 
                 className="font-medium text-primary-600 hover:text-primary-500 transition-colors"
               >
                 忘记密码？
@@ -173,7 +203,7 @@ export default function LoginPage() {
             <span className="text-sm text-secondary-600">
               还没有账户？{' '}
               <Link 
-                href="/auth/register" 
+                href="/register" 
                 className="font-medium text-primary-600 hover:text-primary-500 transition-colors"
               >
                 立即注册
@@ -202,7 +232,7 @@ export default function LoginPage() {
             className="w-full"
             onClick={() => {
               // TODO: 实现第三方登录
-              console.log('第三方登录')
+              notify.info('功能开发中', '第三方登录功能即将上线')
             }}
           >
             <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
