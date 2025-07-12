@@ -19,7 +19,8 @@ import {
   TagIcon,
   DocumentTextIcon,
   TableCellsIcon,
-  PresentationChartBarIcon
+  PresentationChartBarIcon,
+  UserIcon
 } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -487,16 +488,23 @@ export default function FilesPage() {
                     {file.stage}
                   </span>
                   
-                  {file.tags.length > 0 && (
-                    <div className="flex items-center space-x-1">
-                      <TagIcon className="h-3 w-3 text-gray-400" />
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {file.tags[0]}
-                        {file.tags.length > 1 && ` +${file.tags.length - 1}`}
-                      </span>
-                    </div>
-                  )}
+                  {/* 上传者信息 - 移到右侧 */}
+                  <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                    <UserIcon className="h-3 w-3 mr-1" />
+                    <span>{file.uploadedBy}</span>
+                  </div>
                 </div>
+                
+                {/* 标签信息 */}
+                {file.tags.length > 0 && (
+                  <div className="flex items-center space-x-1 mt-2">
+                    <TagIcon className="h-3 w-3 text-gray-400" />
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {file.tags[0]}
+                      {file.tags.length > 1 && ` +${file.tags.length - 1}`}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           ))}
