@@ -16,8 +16,10 @@ import {
   ArrowDownTrayIcon,
   TrashIcon,
   PencilIcon,
-  ShareIcon,
-  TagIcon
+  TagIcon,
+  DocumentTextIcon,
+  TableCellsIcon,
+  PresentationChartBarIcon
 } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -136,15 +138,34 @@ export default function FilesPage() {
     setFilteredFiles(filtered)
   }, [files, searchQuery, selectedStage, selectedType])
 
+  // 改进的文件图标函数，使用更直观的图标
   const getFileIcon = (type: string) => {
     if (type.startsWith('image/')) {
       return <PhotoIcon className="h-8 w-8 text-blue-500" />
     } else if (type === 'application/pdf') {
-      return <DocumentIcon className="h-8 w-8 text-red-500" />
+      return (
+        <div className="h-8 w-8 bg-red-500 rounded flex items-center justify-center">
+          <span className="text-white text-xs font-bold">PDF</span>
+        </div>
+      )
     } else if (type.includes('word')) {
-      return <DocumentIcon className="h-8 w-8 text-blue-600" />
+      return (
+        <div className="h-8 w-8 bg-blue-600 rounded flex items-center justify-center">
+          <DocumentTextIcon className="h-5 w-5 text-white" />
+        </div>
+      )
     } else if (type.includes('excel') || type.includes('sheet')) {
-      return <DocumentIcon className="h-8 w-8 text-green-600" />
+      return (
+        <div className="h-8 w-8 bg-green-600 rounded flex items-center justify-center">
+          <TableCellsIcon className="h-5 w-5 text-white" />
+        </div>
+      )
+    } else if (type.includes('powerpoint') || type.includes('presentation')) {
+      return (
+        <div className="h-8 w-8 bg-orange-600 rounded flex items-center justify-center">
+          <PresentationChartBarIcon className="h-5 w-5 text-white" />
+        </div>
+      )
     } else if (type.startsWith('video/')) {
       return <VideoCameraIcon className="h-8 w-8 text-purple-500" />
     } else if (type.startsWith('audio/')) {
@@ -203,8 +224,46 @@ export default function FilesPage() {
     setShowPreviewModal(true)
   }
 
+  // 添加下载功能
+  const handleDownload = (file: FileItem) => {
+    if (file.url) {
+      // 如果有URL，直接下载
+      const link = document.createElement('a')
+      link.href = file.url
+      link.download = file.name
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } else {
+      // 模拟下载
+      console.log('下载文件:', file.name)
+      // 这里应该调用后端API下载文件
+    }
+  }
+
+  // 添加编辑功能
+  const handleEdit = (file: FileItem) => {
+    // 根据文件类型打开相应的编辑器
+    if (file.type.includes('word')) {
+      // 打开Word编辑器
+      console.log('编辑Word文档:', file.name)
+    } else if (file.type.includes('excel')) {
+      // 打开Excel编辑器
+      console.log('编辑Excel文档:', file.name)
+    } else if (file.type === 'application/pdf') {
+      // PDF通常不能直接编辑，可以转换或标注
+      console.log('PDF文档不支持直接编辑:', file.name)
+    } else {
+      // 其他文件类型
+      console.log('编辑文件:', file.name)
+    }
+    // 这里应该集成在线编辑器或调用外部编辑器
+  }
+
   const handleDelete = (fileId: string) => {
-    setFiles(prev => prev.filter(f => f.id !== fileId))
+    if (confirm('确定要删除这个文件吗？')) {
+      setFiles(prev => prev.filter(f => f.id !== fileId))
+    }
   }
 
   const handleTagFile = (file: FileItem) => {
@@ -377,13 +436,29 @@ export default function FilesPage() {
                   <div className="flex space-x-1">
                     <button
                       onClick={() => handlePreview(file)}
-                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md"
+                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
+                      title="预览"
                     >
                       <EyeIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
                     </button>
                     <button 
+                      onClick={() => handleDownload(file)}
+                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
+                      title="下载"
+                    >
+                      <ArrowDownTrayIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                    </button>
+                    <button 
+                      onClick={() => handleEdit(file)}
+                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
+                      title="编辑"
+                    >
+                      <PencilIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                    </button>
+                    <button 
                       onClick={() => handleTagFile(file)}
-                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md"
+                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
+                      title="标签"
                     >
                       <TagIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
                     </button>
@@ -504,27 +579,35 @@ export default function FilesPage() {
                         <button
                           onClick={() => handlePreview(file)}
                           className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300"
+                          title="预览"
                         >
                           <EyeIcon className="h-4 w-4" />
                         </button>
-                        <button className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300">
+                        <button 
+                          onClick={() => handleDownload(file)}
+                          className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300"
+                          title="下载"
+                        >
                           <ArrowDownTrayIcon className="h-4 w-4" />
                         </button>
-                        <button className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300">
+                        <button 
+                          onClick={() => handleEdit(file)}
+                          className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300"
+                          title="编辑"
+                        >
                           <PencilIcon className="h-4 w-4" />
-                        </button>
-                        <button className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300">
-                          <ShareIcon className="h-4 w-4" />
                         </button>
                         <button 
                           onClick={() => handleTagFile(file)}
-                          className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300"
+                          className="text-purple-600 hover:text-purple-900 dark:text-purple-400 dark:hover:text-purple-300"
+                          title="标签"
                         >
                           <TagIcon className="h-4 w-4" />
                         </button>
                         <button 
                           onClick={() => handleDelete(file.id)}
                           className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+                          title="删除"
                         >
                           <TrashIcon className="h-4 w-4" />
                         </button>

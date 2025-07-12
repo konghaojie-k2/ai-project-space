@@ -9,7 +9,8 @@ import {
   ArrowTrendingUpIcon,
   ClockIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ChartBarIcon
 } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 
@@ -104,7 +105,7 @@ export default function DashboardPage() {
         <h2 className="text-lg font-medium text-secondary-900 mb-4">快速操作</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <a
-            href="/dashboard/projects/new"
+            href="/dashboard/projects"
             className="flex items-center p-4 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors group"
           >
             <FolderIcon className="h-8 w-8 text-primary-600 group-hover:text-primary-700" />
@@ -115,13 +116,13 @@ export default function DashboardPage() {
           </a>
           
           <a
-            href="/dashboard/files"
+            href="/dashboard/analytics"
             className="flex items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors group"
           >
-            <DocumentTextIcon className="h-8 w-8 text-green-600 group-hover:text-green-700" />
+            <ChartBarIcon className="h-8 w-8 text-green-600 group-hover:text-green-700" />
             <div className="ml-3">
-              <p className="text-sm font-medium text-green-900">上传文件</p>
-              <p className="text-xs text-green-600">添加项目文档</p>
+              <p className="text-sm font-medium text-green-900">项目分析</p>
+              <p className="text-xs text-green-600">数据统计分析</p>
             </div>
           </a>
           
