@@ -29,21 +29,15 @@ class Settings(BaseSettings):
         raise ValueError(v)
     
     # 数据库配置
-    DATABASE_URL: Optional[PostgresDsn] = None
+    DATABASE_URL: Optional[str] = None
     
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def assemble_db_connection(cls, v: Optional[str]) -> Any:
         if isinstance(v, str):
             return v
-        return PostgresDsn.build(
-            scheme="postgresql+asyncpg",
-            username="postgres",
-            password="postgres123",
-            host="localhost",
-            port=5432,
-            path="ai_project_manager",
-        )
+        # 使用SQLite进行开发测试
+        return "sqlite:///./test.db"
     
     # Redis配置
     REDIS_URL: str = "redis://:redis123@localhost:6379/0"

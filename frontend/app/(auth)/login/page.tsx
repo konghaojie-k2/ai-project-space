@@ -3,37 +3,47 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import toast from 'react-hot-toast'
 import { EyeIcon, EyeSlashIcon, EnvelopeIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
-import Input from '@/components/ui/Input'
+import FormField from '@/components/ui/FormField'
 import { useUserActions, useUserLoading, useUserError } from '@/lib/stores/userStore'
-import { useNotify } from '@/lib/stores/appStore'
+import { loginSchema, LoginFormData } from '@/lib/validations'
 
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const notify = useNotify()
+  const [showPassword, setShowPassword] = useState(false)
   
   // Zustand状态
   const { login, clearError } = useUserActions()
   const isLoading = useUserLoading()
   const error = useUserError()
   
-  // 本地状态
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
+  // React Hook Form
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+    watch,
+  } = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+      rememberMe: false,
+    },
   })
-  const [showPassword, setShowPassword] = useState(false)
-  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   // 检查URL参数中的消息
   useEffect(() => {
     const message = searchParams.get('message')
     if (message) {
-      notify.success('注册成功', message)
+      toast.success(message)
     }
-  }, [searchParams, notify])
+  }, [searchParams])
 
   // 清除错误信息
   useEffect(() => {
@@ -42,59 +52,15 @@ export default function LoginPage() {
     }
   }, [clearError])
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }))
-    
-    // 清除对应字段的错误
-    if (formErrors[name]) {
-      setFormErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }))
-    }
-    
-    // 清除全局错误
-    if (error) {
-      clearError()
-    }
-  }
-
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {}
-    
-    if (!formData.email) {
-      newErrors.email = '请输入邮箱地址'
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = '邮箱格式不正确'
-    }
-    
-    if (!formData.password) {
-      newErrors.password = '请输入密码'
-    } else if (formData.password.length < 6) {
-      newErrors.password = '密码至少6位'
-    }
-    
-    setFormErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    if (!validateForm()) return
-    
+  const onSubmit = async (data: LoginFormData) => {
     try {
       await login({
-        email: formData.email,
-        password: formData.password
+        email: data.email,
+        password: data.password
       })
       
       // 登录成功，显示通知并跳转
-      notify.success('登录成功', '欢迎回到AI项目管理系统')
+      toast.success('登录成功！欢迎回到AI项目管理系统')
       router.push('/dashboard')
       
     } catch (error) {
@@ -118,7 +84,7 @@ export default function LoginPage() {
         </div>
 
         {/* 登录表单 */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit(onSubmit)}>
           {/* 全局错误信息 */}
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
@@ -128,27 +94,26 @@ export default function LoginPage() {
 
           <div className="space-y-4">
             {/* 邮箱输入 */}
-            <Input
+            <FormField
               name="email"
               type="email"
               label="邮箱地址"
               placeholder="请输入邮箱地址"
-              value={formData.email}
-              onChange={handleInputChange}
-              error={formErrors.email}
+              register={register}
+              error={errors.email}
               leftIcon={<EnvelopeIcon />}
               required
+              autoComplete="email"
             />
 
             {/* 密码输入 */}
-            <Input
+            <FormField
               name="password"
               type={showPassword ? 'text' : 'password'}
               label="密码"
               placeholder="请输入密码"
-              value={formData.password}
-              onChange={handleInputChange}
-              error={formErrors.password}
+              register={register}
+              error={errors.password}
               leftIcon={<LockClosedIcon />}
               rightIcon={
                 <button
@@ -160,6 +125,7 @@ export default function LoginPage() {
                 </button>
               }
               required
+              autoComplete="current-password"
             />
           </div>
 
@@ -167,12 +133,12 @@ export default function LoginPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <input
-                id="remember-me"
-                name="remember-me"
+                id="rememberMe"
+                {...register('rememberMe')}
                 type="checkbox"
                 className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-secondary-300 rounded"
               />
-              <label htmlFor="remember-me" className="ml-2 block text-sm text-secondary-700">
+              <label htmlFor="rememberMe" className="ml-2 block text-sm text-secondary-700">
                 记住我
               </label>
             </div>
@@ -232,7 +198,7 @@ export default function LoginPage() {
             className="w-full"
             onClick={() => {
               // TODO: 实现第三方登录
-              notify.info('功能开发中', '第三方登录功能即将上线')
+              toast('第三方登录功能即将上线')
             }}
           >
             <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">

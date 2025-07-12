@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+import ToastProvider from '@/components/providers/ToastProvider'
 
 // 配置Inter字体
 const inter = Inter({ subsets: ['latin'] })
@@ -42,10 +43,8 @@ export default function RootLayout({
           {children}
         </main>
         
-        {/* Toast通知容器 */}
-        <div id="toast-container" className="fixed top-4 right-4 z-50 space-y-2">
-          {/* Toast消息将在这里动态插入 */}
-        </div>
+        {/* Toast通知提供者 */}
+        <ToastProvider />
       </body>
     </html>
   )
