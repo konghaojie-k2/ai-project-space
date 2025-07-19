@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { 
   ArrowLeftIcon,
   CloudArrowUpIcon,
@@ -25,7 +25,9 @@ import {
   FolderIcon,
   ArchiveBoxIcon,
   UserIcon,
-  CpuChipIcon
+  CpuChipIcon,
+  ChatBubbleLeftRightIcon,
+  HomeIcon
 } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import Button from '@/components/ui/Button'
@@ -333,6 +335,8 @@ export default function ProjectDetailPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [fileToTag, setFileToTag] = useState<FileItem | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
+
+
 
   // 客户端水合完成后再加载localStorage数据
   useEffect(() => {
@@ -646,6 +650,13 @@ export default function ProjectDetailPage() {
     setSelectedTags([])
   }
 
+
+
+  const handleOpenAIChat = () => {
+    // 直接跳转到AI对话页面，并传递项目ID作为参数
+    window.location.href = `/dashboard/chat?project=${projectId}&name=${encodeURIComponent(project.name)}`
+  }
+
   // 如果项目已归档，显示无法访问的提示
   if (isHydrated && project.status === 'archived') {
     return renderArchivedProject()
@@ -655,6 +666,11 @@ export default function ProjectDetailPage() {
     <div className="space-y-6">
       {/* 面包屑导航 */}
       <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+        <Link href="/dashboard" className="hover:text-gray-700 dark:hover:text-gray-300 flex items-center">
+          <HomeIcon className="h-4 w-4 mr-1" />
+          Dashboard
+        </Link>
+        <span>/</span>
         <Link href="/dashboard/projects" className="hover:text-gray-700 dark:hover:text-gray-300">
           项目管理
         </Link>
@@ -697,10 +713,20 @@ export default function ProjectDetailPage() {
               </div>
             </div>
           </div>
-          <Button onClick={() => setShowUploadModal(true)}>
-            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
-            上传文件
-          </Button>
+          <div className="flex items-center space-x-3">
+            <Button
+              variant="outline"
+              onClick={handleOpenAIChat}
+              className="flex items-center"
+            >
+              <ChatBubbleLeftRightIcon className="h-5 w-5 mr-2" />
+              AI助手
+            </Button>
+            <Button onClick={() => setShowUploadModal(true)}>
+              <CloudArrowUpIcon className="h-5 w-5 mr-2" />
+              上传文件
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1066,6 +1092,8 @@ export default function ProjectDetailPage() {
           onClose={() => setShowTagManager(false)}
         />
       )}
+
+
     </div>
   )
 } 
