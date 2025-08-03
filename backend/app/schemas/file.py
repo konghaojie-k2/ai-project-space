@@ -22,6 +22,7 @@ class FileBase(BaseModel):
     """文件基础模式"""
     original_name: str = Field(..., description="原始文件名")
     description: Optional[str] = Field(None, description="文件描述")
+    project_id: Optional[str] = Field(None, description="项目ID")
     stage: str = Field(..., description="项目阶段")
     tags: List[str] = Field(default_factory=list, description="标签列表")
     is_public: bool = Field(False, description="是否公开")
@@ -44,6 +45,7 @@ class FileCreate(FileBase):
 
 class FileUpdate(BaseModel):
     """更新文件模式"""
+    original_name: Optional[str] = Field(None, description="原始文件名")
     description: Optional[str] = Field(None, description="文件描述")
     stage: Optional[str] = Field(None, description="项目阶段")
     tags: Optional[List[str]] = Field(None, description="标签列表")
@@ -82,7 +84,7 @@ class FileResponse(FileBase):
     parent_id: Optional[str] = Field(None, description="父文件ID")
     
     # 元数据
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
+    file_metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
     
     class Config:
         from_attributes = True

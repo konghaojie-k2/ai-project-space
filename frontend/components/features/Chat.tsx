@@ -185,9 +185,10 @@ export const Chat: React.FC<ChatProps> = ({
                   </div>
                   <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-2">
                     <div className="text-sm text-gray-800">
-                      {message.isTyping ? (
+                      {message.status === 'sending' && !message.content ? (
+                        // 等待AI回复状态
                         <div className="flex items-center gap-1">
-                          <span>正在输入</span>
+                          <span>AI正在思考</span>
                           <div className="flex gap-1">
                             <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce"></div>
                             <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
@@ -195,12 +196,21 @@ export const Chat: React.FC<ChatProps> = ({
                           </div>
                         </div>
                       ) : (
-                        renderMessageContent(message.content)
+                        <div className="relative">
+                          {renderMessageContent(message.content)}
+                          {/* 流式回复时显示光标 */}
+                          {message.status === 'sending' && message.content && (
+                            <span className="inline-block w-0.5 h-4 bg-gray-600 ml-1 animate-pulse"></span>
+                          )}
+                        </div>
                       )}
                     </div>
-                    {message.status === 'sending' && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        正在发送...
+                    {/* 显示消息状态 */}
+                    {message.status && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        {message.status === 'sending' ? '发送中...' : 
+                         message.status === 'sent' ? '已发送' : 
+                         message.status === 'error' ? '发送失败' : ''}
                       </div>
                     )}
                   </div>

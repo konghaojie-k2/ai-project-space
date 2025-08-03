@@ -22,6 +22,7 @@ class FileRecord(Base):
     file_extension = Column(String, comment="文件扩展名")
     
     # 项目相关
+    project_id = Column(String, comment="项目ID")
     stage = Column(String, nullable=False, comment="项目阶段")
     tags = Column(JSON, default=list, comment="标签列表")
     description = Column(Text, comment="文件描述")
@@ -54,7 +55,7 @@ class FileRecord(Base):
     parent_id = Column(String, comment="父文件ID")
     
     # 元数据
-    file_metadata = Column(JSON, default=dict, comment="额外元数据")
+    file_metadata = Column(JSON, default=lambda: {}, comment="额外元数据")
     
     def __repr__(self):
         return f"<FileRecord(id={self.id}, name={self.original_name})>"

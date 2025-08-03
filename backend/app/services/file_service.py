@@ -17,10 +17,10 @@ from app.utils.file_utils import extract_text_from_pdf, extract_text_from_docx, 
 class FileService:
     """文件服务"""
     
-    def __init__(self):
-        self.db = next(get_db())
+    def __init__(self, db: Session):
+        self.db = db
     
-    async def create_file(self, file_create: FileCreate) -> FileResponse:
+    def create_file(self, file_create: FileCreate) -> FileResponse:
         """
         创建文件记录
         
@@ -31,7 +31,11 @@ class FileService:
             FileResponse: 创建的文件记录
         """
         try:
+            logger.info(f"🔥 FileService.create_file - 开始创建文件记录")
+            logger.info(f"🔥 FileCreate数据: {file_create}")
+            
             # 创建文件记录
+            logger.info(f"🔥 开始创建FileRecord对象")
             file_record = FileRecord(
                 original_name=file_create.original_name,
                 stored_name=file_create.stored_name,
@@ -39,26 +43,52 @@ class FileService:
                 file_size=file_create.file_size,
                 file_type=file_create.file_type,
                 file_extension=Path(file_create.original_name).suffix,
+                project_id=file_create.project_id,
                 stage=file_create.stage,
                 tags=file_create.tags,
                 description=file_create.description,
                 uploaded_by=file_create.uploaded_by,
                 is_public=file_create.is_public
             )
+            logger.info(f"🔥 FileRecord对象创建成功: {file_record}")
             
+            logger.info(f"🔥 开始添加到数据库会话")
             self.db.add(file_record)
+            
+            logger.info(f"🔥 开始提交数据库事务")
             self.db.commit()
+            
+            logger.info(f"🔥 开始刷新文件记录")
             self.db.refresh(file_record)
             
-            logger.info(f"文件记录创建成功: {file_record.id}")
-            return FileResponse.from_orm(file_record)
+            logger.info(f"🔥 文件记录创建成功: {file_record.id}")
+            
+            # 确保file_metadata是字典类型
+            logger.info(f"🔥 检查file_metadata类型: {type(file_record.file_metadata)}")
+            if not isinstance(file_record.file_metadata, dict):
+                logger.warning(f"🔥 file_metadata不是字典类型，将设置为空字典")
+                file_record.file_metadata = {}
+            else:
+                logger.info(f"🔥 file_metadata是字典类型: {file_record.file_metadata}")
+                
+            logger.info(f"🔥 开始创建FileResponse对象")
+            response = FileResponse.model_validate(file_record)
+            logger.info(f"🔥 FileResponse对象创建成功: {response.id}")
+            
+            return response
             
         except Exception as e:
+            logger.error(f"🔥 FileService.create_file - 创建文件记录失败: {e}")
+            logger.error(f"🔥 异常类型: {type(e).__name__}")
+            logger.error(f"🔥 异常详情: {str(e)}")
+            import traceback
+            logger.error(f"🔥 异常堆栈: {traceback.format_exc()}")
+            
             self.db.rollback()
-            logger.error(f"创建文件记录失败: {e}")
+            logger.info(f"🔥 数据库事务已回滚")
             raise
     
-    async def get_file_by_id(self, file_id: str) -> Optional[FileResponse]:
+    def get_file_by_id(self, file_id: str) -> Optional[FileResponse]:
         """
         根据ID获取文件
         
@@ -70,22 +100,25 @@ class FileService:
         """
         try:
             file_record = self.db.query(FileRecord).filter(
-                and_(
-                    FileRecord.id == file_id,
-                    FileRecord.is_deleted == False
-                )
+                FileRecord.id == file_id
             ).first()
             
-            if file_record:
-                return FileResponse.from_orm(file_record)
-            return None
+            if not file_record:
+                return None
+            
+            # 确保file_metadata是字典类型
+            if not isinstance(file_record.file_metadata, dict):
+                file_record.file_metadata = {}
+                
+            return FileResponse.model_validate(file_record)
             
         except Exception as e:
             logger.error(f"获取文件记录失败: {e}")
             raise
     
-    async def get_files(
+    def get_files(
         self,
+        project_id: Optional[str] = None,
         stage: Optional[str] = None,
         tags: Optional[List[str]] = None,
         search: Optional[str] = None,
@@ -96,6 +129,7 @@ class FileService:
         获取文件列表
         
         Args:
+            project_id: 项目ID筛选
             stage: 项目阶段筛选
             tags: 标签筛选
             search: 搜索关键词
@@ -107,6 +141,10 @@ class FileService:
         """
         try:
             query = self.db.query(FileRecord).filter(FileRecord.is_deleted == False)
+            
+            # 项目ID筛选
+            if project_id:
+                query = query.filter(FileRecord.project_id == project_id)
             
             # 阶段筛选
             if stage:
@@ -130,13 +168,18 @@ class FileService:
             offset = (page - 1) * size
             files = query.order_by(desc(FileRecord.created_at)).offset(offset).limit(size).all()
             
-            return [FileResponse.from_orm(file) for file in files]
+            # 确保每个文件的file_metadata是字典类型
+            for file_record in files:
+                if not isinstance(file_record.file_metadata, dict):
+                    file_record.file_metadata = {}
+            
+            return [FileResponse.model_validate(file) for file in files]
             
         except Exception as e:
             logger.error(f"获取文件列表失败: {e}")
             raise
     
-    async def update_file(self, file_id: str, file_update: FileUpdate) -> Optional[FileResponse]:
+    def update_file(self, file_id: str, file_update: FileUpdate) -> Optional[FileResponse]:
         """
         更新文件信息
         
@@ -159,6 +202,10 @@ class FileService:
                 return None
             
             # 更新字段
+            if file_update.original_name is not None:
+                file_record.original_name = file_update.original_name
+                # 同时更新文件扩展名
+                file_record.file_extension = Path(file_update.original_name).suffix
             if file_update.description is not None:
                 file_record.description = file_update.description
             if file_update.stage is not None:
@@ -173,15 +220,19 @@ class FileService:
             self.db.commit()
             self.db.refresh(file_record)
             
+            # 确保file_metadata是字典类型
+            if not isinstance(file_record.file_metadata, dict):
+                file_record.file_metadata = {}
+            
             logger.info(f"文件记录更新成功: {file_id}")
-            return FileResponse.from_orm(file_record)
+            return FileResponse.model_validate(file_record)
             
         except Exception as e:
             self.db.rollback()
             logger.error(f"更新文件记录失败: {e}")
             raise
     
-    async def delete_file(self, file_id: str) -> bool:
+    def delete_file(self, file_id: str) -> bool:
         """
         删除文件（软删除）
         
@@ -215,7 +266,7 @@ class FileService:
             logger.error(f"删除文件记录失败: {e}")
             raise
     
-    async def increment_view_count(self, file_id: str) -> bool:
+    def increment_view_count(self, file_id: str) -> bool:
         """
         增加查看次数
         
@@ -248,7 +299,7 @@ class FileService:
             logger.error(f"更新查看次数失败: {e}")
             raise
     
-    async def increment_download_count(self, file_id: str) -> bool:
+    def increment_download_count(self, file_id: str) -> bool:
         """
         增加下载次数
         
@@ -388,14 +439,14 @@ class FileService:
                 FileRecord.is_deleted == False
             ).order_by(desc(FileRecord.created_at)).limit(5).all()
             
-            recent_uploads = [FileResponse.from_orm(file) for file in recent_files]
+            recent_uploads = [FileResponse.model_validate(file) for file in recent_files]
             
             # 热门文件（按查看次数排序）
             popular_files = self.db.query(FileRecord).filter(
                 FileRecord.is_deleted == False
             ).order_by(desc(FileRecord.view_count)).limit(5).all()
             
-            popular_files_list = [FileResponse.from_orm(file) for file in popular_files]
+            popular_files_list = [FileResponse.model_validate(file) for file in popular_files]
             
             return FileStatsResponse(
                 total_files=total_files,
@@ -486,7 +537,7 @@ class FileService:
             files = query_obj.offset(offset).limit(size).all()
             
             return {
-                "files": [FileResponse.from_orm(file) for file in files],
+                "files": [FileResponse.model_validate(file) for file in files],
                 "total": total,
                 "page": page,
                 "size": size,

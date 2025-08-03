@@ -115,42 +115,71 @@ export default function ChatPage() {
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
+    // 创建AI消息占位符
+    const aiMessageId = (Date.now() + 1).toString();
+    const aiMessage: Message = {
+      id: aiMessageId,
+      content: '',
+      role: 'assistant',
+      timestamp: new Date(),
+      status: 'sending'
+    };
+
+    setMessages(prev => [...prev, aiMessage]);
+
     try {
-      // 直接使用chatAPI发送消息
       const request = {
         messages: [...messages, userMessage],
         project_id: currentConversation.project_id,
-        stream: false
+        stream: true
       };
 
-      const apiResponse = await chatAPI.sendMessage(currentConversation.id, request);
-      
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: apiResponse.content,
-        role: 'assistant',
-        timestamp: new Date(),
-        status: 'sent'
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
-
-      // 更新会话列表
-      await loadConversations();
+      // 使用流式API
+      await chatAPI.sendMessageStream(currentConversation.id, request, {
+        onStart: (messageId) => {
+          console.log('AI开始回复:', messageId);
+        },
+        onContent: (chunk) => {
+          // 实时更新AI消息内容
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { ...msg, content: msg.content + chunk, status: 'sending' }
+              : msg
+          ));
+        },
+        onEnd: (messageId) => {
+          // 标记消息完成
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { ...msg, status: 'sent' }
+              : msg
+          ));
+          setIsLoading(false);
+          // 更新会话列表
+          loadConversations();
+        },
+        onError: (error) => {
+          console.error('流式回复失败:', error);
+          // 使用降级方案
+          const fallbackContent = generateSmartResponse(content, currentConversation.project_name);
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { ...msg, content: fallbackContent, status: 'sent' }
+              : msg
+          ));
+          setIsLoading(false);
+        }
+      });
 
     } catch (error) {
       console.error('发送消息失败:', error);
-      // 最终降级处理
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: generateSmartResponse(content, currentConversation.project_name),
-        role: 'assistant',
-        timestamp: new Date(),
-        status: 'sent'
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
-    } finally {
+      // 降级处理
+      const fallbackContent = generateSmartResponse(content, currentConversation.project_name);
+      setMessages(prev => prev.map(msg => 
+        msg.id === aiMessageId 
+          ? { ...msg, content: fallbackContent, status: 'sent' }
+          : msg
+      ));
       setIsLoading(false);
     }
   };

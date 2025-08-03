@@ -12,54 +12,125 @@ import {
   ExclamationTriangleIcon,
   ChartBarIcon
 } from '@heroicons/react/24/outline'
-import { cn } from '@/lib/utils'
+import { cn, formatFileSize } from '@/lib/utils'
+import { projectSync } from '@/lib/services/project-sync'
 
-// 统计卡片数据
-const stats = [
-  {
-    name: '活跃项目',
-    value: '12',
-    change: '+2',
-    changeType: 'increase',
-    icon: FolderIcon,
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-50'
-  },
-  {
-    name: '文件总数',
-    value: '1,234',
-    change: '+89',
-    changeType: 'increase',
-    icon: DocumentTextIcon,
-    color: 'text-green-600',
-    bgColor: 'bg-green-50'
-  },
-  {
-    name: 'AI对话',
-    value: '456',
-    change: '+23',
-    changeType: 'increase',
-    icon: ChatBubbleLeftRightIcon,
-    color: 'text-purple-600',
-    bgColor: 'bg-purple-50'
-  },
-  {
-    name: '团队成员',
-    value: '8',
-    change: '+1',
-    changeType: 'increase',
-    icon: UserGroupIcon,
-    color: 'text-orange-600',
-    bgColor: 'bg-orange-50'
+interface Project {
+  id: string
+  name: string
+  description: string
+  stage: string
+  createdAt: string
+  updatedAt: string
+  memberCount: number
+  fileCount: number
+  totalSize: number
+  status: 'active' | 'archived' | 'completed'
+  color: string
+}
+
+interface DashboardStats {
+  activeProjects: number
+  totalFiles: number
+  totalSize: number
+  totalMembers: number
+  aiChats: number
+}
+
+// 获取全局文件统计
+const fetchGlobalFileStats = async (): Promise<{ totalFiles: number; totalSize: number }> => {
+  try {
+    const response = await fetch('/api/v1/files')
+    if (response.ok) {
+      const files = await response.json()
+      return {
+        totalFiles: files.length,
+        totalSize: files.reduce((sum: number, file: any) => sum + (file.file_size || 0), 0)
+      }
+    }
+  } catch (error) {
+    console.error('获取文件统计失败:', error)
   }
-]
+  return { totalFiles: 0, totalSize: 0 }
+}
 
 export default function DashboardPage() {
   const [isLoaded, setIsLoaded] = useState(false)
+  const [stats, setStats] = useState<DashboardStats>({
+    activeProjects: 0,
+    totalFiles: 0,
+    totalSize: 0,
+    totalMembers: 0,
+    aiChats: 0
+  })
 
   useEffect(() => {
-    setIsLoaded(true)
+    const loadDashboardData = async () => {
+      // 使用同步服务获取项目统计
+      const globalStats = projectSync.getGlobalStats()
+      
+      // 获取真实文件统计
+      const fileStats = await fetchGlobalFileStats()
+      
+      setStats({
+        activeProjects: globalStats.activeProjects,
+        totalFiles: fileStats.totalFiles,
+        totalSize: fileStats.totalSize,
+        totalMembers: globalStats.totalMembers,
+        aiChats: 0 // TODO: 后续从API获取AI对话统计
+      })
+      
+      setIsLoaded(true)
+    }
+    
+    loadDashboardData()
+
+    // 订阅项目数据变化，实时更新统计
+    const unsubscribe = projectSync.subscribe(() => {
+      loadDashboardData()
+    })
+    
+    return unsubscribe
   }, [])
+
+  const statsCards = [
+    {
+      name: '活跃项目',
+      value: stats.activeProjects.toString(),
+      change: '+0', // TODO: 计算变化
+      changeType: 'increase',
+      icon: FolderIcon,
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50'
+    },
+    {
+      name: '文件总数',
+      value: stats.totalFiles.toString(),
+      change: '+0', // TODO: 计算变化
+      changeType: 'increase',
+      icon: DocumentTextIcon,
+      color: 'text-green-600',
+      bgColor: 'bg-green-50'
+    },
+    {
+      name: 'AI对话',
+      value: stats.aiChats.toString(),
+      change: '+0', // TODO: 计算变化
+      changeType: 'increase',
+      icon: ChatBubbleLeftRightIcon,
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-50'
+    },
+    {
+      name: '存储空间',
+      value: formatFileSize(stats.totalSize),
+      change: '+0', // TODO: 计算变化
+      changeType: 'increase',
+      icon: UserGroupIcon,
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-50'
+    }
+  ]
 
   return (
     <div className={cn('space-y-6 transition-opacity duration-1000', isLoaded ? 'opacity-100' : 'opacity-0')}>
@@ -73,7 +144,7 @@ export default function DashboardPage() {
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((item, index) => (
+        {statsCards.map((item, index) => (
           <div 
             key={item.name}
             className="card hover:shadow-md transition-all duration-300 animate-scale-in"

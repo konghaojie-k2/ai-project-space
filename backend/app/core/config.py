@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # ========================================
     # 服务器配置
     # ========================================
+    BACKEND_HOST: str = "0.0.0.0"
     FRONTEND_PORT: int = 3000
     BACKEND_PORT: int = 8000
     
@@ -39,16 +40,25 @@ class Settings(BaseSettings):
     # ========================================
     # CORS配置
     # ========================================
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
+    BACKEND_CORS_ORIGINS: List[str] = []
     
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, str):
+            if not v or v.strip() == "[]":
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                # 处理JSON格式的字符串
+                import json
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    return []
+            return [i.strip() for i in v.split(",") if i.strip()]
+        elif isinstance(v, list):
             return v
-        raise ValueError(v)
+        return []
     
     # ========================================
     # 数据库配置
@@ -69,13 +79,16 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://:redis123@localhost:6379/0"
     
     # ========================================
-    # MinIO配置
+    # 本地文件存储配置
     # ========================================
-    MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin123"
-    MINIO_SECURE: bool = False
-    MINIO_BUCKET_NAME: str = "ai-project-files"
+    UPLOAD_DIR: Path = Path("../uploads")  # 使用项目根目录
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    ALLOWED_FILE_TYPES: List[str] = [
+        "pdf", "docx", "xlsx", "pptx", "txt", "md",
+        "jpg", "jpeg", "png", "gif", "bmp",
+        "mp4", "avi", "mov", "wmv",
+        "mp3", "wav", "flac"
+    ]
     
     # ========================================
     # ChromaDB配置
@@ -91,17 +104,6 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     DEFAULT_LLM_MODEL: str = "gpt-3.5-turbo"
     DEFAULT_EMBEDDING_MODEL: str = "text-embedding-ada-002"
-    
-    # ========================================
-    # 文件上传配置
-    # ========================================
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
-    ALLOWED_FILE_TYPES: List[str] = [
-        "pdf", "docx", "xlsx", "pptx", "txt", "md",
-        "jpg", "jpeg", "png", "gif", "bmp",
-        "mp4", "avi", "mov", "wmv",
-        "mp3", "wav", "flac"
-    ]
     
     # ========================================
     # 邮件配置
@@ -153,8 +155,7 @@ class Settings(BaseSettings):
     # ========================================
     # 文件存储路径
     # ========================================
-    UPLOAD_DIR: Path = Path("uploads")
-    TEMP_DIR: Path = Path("temp")
+    TEMP_DIR: Path = Path("../temp")  # 使用项目根目录
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

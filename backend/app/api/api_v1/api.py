@@ -5,6 +5,7 @@ API v1 主路由
 from fastapi import APIRouter
 from ..chat import router as chat_router
 from ..models import router as models_router
+from .endpoints.files import router as files_router
 
 api_router = APIRouter()
 
@@ -12,4 +13,7 @@ api_router = APIRouter()
 api_router.include_router(chat_router, prefix="/chat")
 
 # 包含模型管理路由
-api_router.include_router(models_router, prefix="/models") 
+api_router.include_router(models_router, prefix="/models")
+
+# 包含文件管理路由
+api_router.include_router(files_router, prefix="/files") 

@@ -37,6 +37,7 @@ import { FileUpload } from '@/components/features/FileUpload'
 import TagManager from '@/components/features/TagManager'
 import { formatFileSize, cn } from '@/lib/utils'
 import { PROJECT_STAGES } from '@/lib/constants/project-stages'
+import { projectSync } from '@/lib/services/project-sync'
 
 interface Project {
   id: string
@@ -61,211 +62,211 @@ interface FileItem {
   tags: string[]
   url?: string
   thumbnail?: string
-  source: 'user' | 'ai' | 'system' // 文件来源：用户上传、AI生成、系统自动
+  source: 'user' | 'ai' | 'system' | 'api' // 文件来源：用户上传、AI生成、系统自动、API
 }
 
-// 模拟项目数据库
-const mockProjects: Record<string, Project> = {
-  '1': {
-    id: '1',
-    name: 'AI智能客服系统',
-    description: '基于大语言模型的智能客服解决方案，提升客户服务效率',
-    stage: '工程开发',
-    createdAt: '2024-01-15T10:00:00Z',
-    updatedAt: '2024-12-28T15:30:00Z',
-    memberCount: 8,
-    status: 'active',
-    color: 'bg-blue-500'
-  },
-  '2': {
-    id: '2',
-    name: '数据分析平台',
-    description: '企业级数据分析和可视化平台，支持多数据源集成',
-    stage: '数据理解',
-    createdAt: '2024-02-01T09:00:00Z',
-    updatedAt: '2024-12-27T11:20:00Z',
-    memberCount: 6,
-    status: 'active',
-    color: 'bg-green-500'
-  },
-  '3': {
-    id: '3',
-    name: '推荐系统优化',
-    description: '电商推荐算法优化项目，提升用户体验和转化率',
-    stage: '实施部署',
-    createdAt: '2024-03-10T14:00:00Z',
-    updatedAt: '2024-12-26T16:45:00Z',
-    memberCount: 5,
-    status: 'completed',
-    color: 'bg-purple-500'
-  },
-  '4': {
-    id: '4',
-    name: '图像识别模型',
-    description: '医疗影像AI诊断辅助系统，提高诊断准确率',
-    stage: '业务调研',
-    createdAt: '2024-04-05T11:00:00Z',
-    updatedAt: '2024-12-25T09:15:00Z',
-    memberCount: 4,
-    status: 'active',
-    color: 'bg-orange-500'
-  }
-}
+// 移除所有模拟数据
+// const mockProjects: Record<string, Project> = {
+//   '1': {
+//     id: '1',
+//     name: 'AI智能客服系统',
+//     description: '基于大语言模型的智能客服解决方案，提升客户服务效率',
+//     stage: '工程开发',
+//     createdAt: '2024-01-15T10:00:00Z',
+//     updatedAt: '2024-12-28T15:30:00Z',
+//     memberCount: 8,
+//     status: 'active',
+//     color: 'bg-blue-500'
+//   },
+//   '2': {
+//     id: '2',
+//     name: '数据分析平台',
+//     description: '企业级数据分析和可视化平台，支持多数据源集成',
+//     stage: '数据理解',
+//     createdAt: '2024-02-01T09:00:00Z',
+//     updatedAt: '2024-12-27T11:20:00Z',
+//     memberCount: 6,
+//     status: 'active',
+//     color: 'bg-green-500'
+//   },
+//   '3': {
+//     id: '3',
+//     name: '推荐系统优化',
+//     description: '电商推荐算法优化项目，提升用户体验和转化率',
+//     stage: '实施部署',
+//     createdAt: '2024-03-10T14:00:00Z',
+//     updatedAt: '2024-12-26T16:45:00Z',
+//     memberCount: 5,
+//     status: 'completed',
+//     color: 'bg-purple-500'
+//   },
+//   '4': {
+//     id: '4',
+//     name: '图像识别模型',
+//     description: '医疗影像AI诊断辅助系统，提高诊断准确率',
+//     stage: '业务调研',
+//     createdAt: '2024-04-05T11:00:00Z',
+//     updatedAt: '2024-12-25T09:15:00Z',
+//     memberCount: 4,
+//     status: 'active',
+//     color: 'bg-orange-500'
+//   }
+// }
 
-// 模拟项目文件数据
-const mockProjectFiles: Record<string, FileItem[]> = {
-  '1': [
-    {
-      id: '1',
-      name: '项目需求文档.pdf',
-      type: 'application/pdf',
-      size: 2048000,
-      uploadedAt: '2024-12-28T10:30:00Z',
-      uploadedBy: '张三',
-      stage: '售前',
-      tags: ['需求', '重要'],
-      source: 'user'
-    },
-    {
-      id: '2',
-      name: '用户调研报告.docx',
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      size: 1536000,
-      uploadedAt: '2024-12-27T14:20:00Z',
-      uploadedBy: '李四',
-      stage: '业务调研',
-      tags: ['调研', '用户'],
-      source: 'user'
-    },
-    {
-      id: '3',
-      name: 'AI生成的数据分析报告.pdf',
-      type: 'application/pdf',
-      size: 512000,
-      uploadedAt: '2024-12-26T09:15:00Z',
-      uploadedBy: 'Claude-3.5',
-      stage: '数据理解',
-      tags: ['AI生成', '分析'],
-      source: 'ai'
-    },
-    {
-      id: '4',
-      name: '系统架构设计.pptx',
-      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      size: 3072000,
-      uploadedAt: '2024-12-25T16:45:00Z',
-      uploadedBy: '赵六',
-      stage: '工程开发',
-      tags: ['架构', '设计'],
-      source: 'user'
-    },
-    {
-      id: '5',
-      name: 'AI优化建议文档.docx',
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      size: 1024000,
-      uploadedAt: '2024-12-24T11:30:00Z',
-      uploadedBy: 'GPT-4',
-      stage: '数据探索',
-      tags: ['AI生成', '优化'],
-      source: 'ai'
-    },
-    {
-      id: '6',
-      name: '测试数据集.xlsx',
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      size: 5120000,
-      uploadedAt: '2024-12-23T11:30:00Z',
-      uploadedBy: '钱七',
-      stage: '数据探索',
-      tags: ['数据', '测试'],
-      source: 'user'
-    }
-  ],
-  '2': [
-    {
-      id: '6',
-      name: '数据源接入方案.pdf',
-      type: 'application/pdf',
-      size: 1800000,
-      uploadedAt: '2024-12-27T14:20:00Z',
-      uploadedBy: '李四',
-      stage: '数据理解',
-      tags: ['数据源', '方案'],
-      source: 'user'
-    },
-    {
-      id: '7',
-      name: 'AI生成的可视化建议.pdf',
-      type: 'application/pdf',
-      size: 3200000,
-      uploadedAt: '2024-12-26T10:15:00Z',
-      uploadedBy: 'Gemini-Pro',
-      stage: '数据理解',
-      tags: ['AI生成', '可视化'],
-      source: 'ai'
-    },
-    {
-      id: '8',
-      name: '数据字典.xlsx',
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      size: 890000,
-      uploadedAt: '2024-12-25T16:30:00Z',
-      uploadedBy: '赵六',
-      stage: '数据理解',
-      tags: ['数据字典', '文档'],
-      source: 'user'
-    }
-  ],
-  '3': [
-    {
-      id: '9',
-      name: '推荐算法优化报告.pdf',
-      type: 'application/pdf',
-      size: 2400000,
-      uploadedAt: '2024-12-26T11:45:00Z',
-      uploadedBy: '钱七',
-      stage: '实施部署',
-      tags: ['算法', '优化'],
-      source: 'user'
-    },
-    {
-      id: '10',
-      name: 'AI生成的A/B测试分析.pdf',
-      type: 'application/pdf',
-      size: 1600000,
-      uploadedAt: '2024-12-25T09:20:00Z',
-      uploadedBy: 'Claude-3.5',
-      stage: '实施部署',
-      tags: ['AI生成', '测试'],
-      source: 'ai'
-    }
-  ],
-  '4': [
-    {
-      id: '11',
-      name: '医疗影像标注指南.pdf',
-      type: 'application/pdf',
-      size: 3100000,
-      uploadedAt: '2024-12-25T13:30:00Z',
-      uploadedBy: '周九',
-      stage: '业务调研',
-      tags: ['标注', '指南'],
-      source: 'user'
-    },
-    {
-      id: '12',
-      name: 'AI诊断模型建议.pdf',
-      type: 'application/pdf',
-      size: 2800000,
-      uploadedAt: '2024-12-24T16:45:00Z',
-      uploadedBy: 'GPT-4',
-      stage: '业务调研',
-      tags: ['AI生成', '模型'],
-      source: 'ai'
-    }
-  ]
-}
+// 移除所有模拟数据
+// const mockProjectFiles: Record<string, FileItem[]> = {
+//   '1': [
+//     {
+//       id: '1',
+//       name: '项目需求文档.pdf',
+//       type: 'application/pdf',
+//       size: 2048000,
+//       uploadedAt: '2024-12-28T10:30:00Z',
+//       uploadedBy: '张三',
+//       stage: '售前',
+//       tags: ['需求', '重要'],
+//       source: 'user'
+//     },
+//     {
+//       id: '2',
+//       name: '用户调研报告.docx',
+//       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+//       size: 1536000,
+//       uploadedAt: '2024-12-27T14:20:00Z',
+//       uploadedBy: '李四',
+//       stage: '业务调研',
+//       tags: ['调研', '用户'],
+//       source: 'user'
+//     },
+//     {
+//       id: '3',
+//       name: 'AI生成的数据分析报告.pdf',
+//       type: 'application/pdf',
+//       size: 512000,
+//       uploadedAt: '2024-12-26T09:15:00Z',
+//       uploadedBy: 'Claude-3.5',
+//       stage: '数据理解',
+//       tags: ['AI生成', '分析'],
+//       source: 'ai'
+//     },
+//     {
+//       id: '4',
+//       name: '系统架构设计.pptx',
+//       type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+//       size: 3072000,
+//       uploadedAt: '2024-12-25T16:45:00Z',
+//       uploadedBy: '赵六',
+//       stage: '工程开发',
+//       tags: ['架构', '设计'],
+//       source: 'user'
+//     },
+//     {
+//       id: '5',
+//       name: 'AI优化建议文档.docx',
+//       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+//       size: 1024000,
+//       uploadedAt: '2024-12-24T11:30:00Z',
+//       uploadedBy: 'GPT-4',
+//       stage: '数据探索',
+//       tags: ['AI生成', '优化'],
+//       source: 'ai'
+//     },
+//     {
+//       id: '6',
+//       name: '测试数据集.xlsx',
+//       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+//       size: 5120000,
+//       uploadedAt: '2024-12-23T11:30:00Z',
+//       uploadedBy: '钱七',
+//       stage: '数据探索',
+//       tags: ['数据', '测试'],
+//       source: 'user'
+//     }
+//   ],
+//   '2': [
+//     {
+//       id: '6',
+//       name: '数据源接入方案.pdf',
+//       type: 'application/pdf',
+//       size: 1800000,
+//       uploadedAt: '2024-12-27T14:20:00Z',
+//       uploadedBy: '李四',
+//       stage: '数据理解',
+//       tags: ['数据源', '方案'],
+//       source: 'user'
+//     },
+//     {
+//       id: '7',
+//       name: 'AI生成的可视化建议.pdf',
+//       type: 'application/pdf',
+//       size: 3200000,
+//       uploadedAt: '2024-12-26T10:15:00Z',
+//       uploadedBy: 'Gemini-Pro',
+//       stage: '数据理解',
+//       tags: ['AI生成', '可视化'],
+//       source: 'ai'
+//     },
+//     {
+//       id: '8',
+//       name: '数据字典.xlsx',
+//       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+//       size: 890000,
+//       uploadedAt: '2024-12-25T16:30:00Z',
+//       uploadedBy: '赵六',
+//       stage: '数据理解',
+//       tags: ['数据字典', '文档'],
+//       source: 'user'
+//     }
+//   ],
+//   '3': [
+//     {
+//       id: '9',
+//       name: '推荐算法优化报告.pdf',
+//       type: 'application/pdf',
+//       size: 2400000,
+//       uploadedAt: '2024-12-26T11:45:00Z',
+//       uploadedBy: '钱七',
+//       stage: '实施部署',
+//       tags: ['算法', '优化'],
+//       source: 'user'
+//     },
+//     {
+//       id: '10',
+//       name: 'AI生成的A/B测试分析.pdf',
+//       type: 'application/pdf',
+//       size: 1600000,
+//       uploadedAt: '2024-12-25T09:20:00Z',
+//       uploadedBy: 'Claude-3.5',
+//       stage: '实施部署',
+//       tags: ['AI生成', '测试'],
+//       source: 'ai'
+//     }
+//   ],
+//   '4': [
+//     {
+//       id: '11',
+//       name: '医疗影像标注指南.pdf',
+//       type: 'application/pdf',
+//       size: 3100000,
+//       uploadedAt: '2024-12-25T13:30:00Z',
+//       uploadedBy: '周九',
+//       stage: '业务调研',
+//       tags: ['标注', '指南'],
+//       source: 'user'
+//     },
+//     {
+//       id: '12',
+//       name: 'AI诊断模型建议.pdf',
+//       type: 'application/pdf',
+//       size: 2800000,
+//       uploadedAt: '2024-12-24T16:45:00Z',
+//       uploadedBy: 'GPT-4',
+//       stage: '业务调研',
+//       tags: ['AI生成', '模型'],
+//       source: 'ai'
+//     }
+//   ]
+// }
 
 const stages = ['全部', ...PROJECT_STAGES.map(stage => stage.name)]
 const fileTypes = ['全部', 'PDF', 'Word', 'Excel', 'PPT', '图片', '视频', '音频', '其他']
@@ -288,10 +289,39 @@ const getStoredProjects = (): Record<string, Project> => {
       console.error('读取项目数据失败:', error)
     }
   }
-  return mockProjects
+  return {} // 移除模拟数据，返回空对象
+}
+
+// 从后端API获取文件列表
+const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
+  try {
+    const response = await fetch(`/api/v1/files?project_id=${projectId}`)
+    if (response.ok) {
+      const files = await response.json()
+      return files.map((file: any) => ({
+        id: file.id,
+        name: file.original_name,
+        type: file.file_type,
+        size: file.file_size,
+        uploadedAt: file.created_at,
+        uploadedBy: '当前用户', // 可以从用户信息获取
+        stage: file.stage,
+        tags: [], // 可以从file.tags获取
+        url: `/api/v1/files/${file.id}/download`, // 下载链接
+        source: 'api' as const
+      }))
+    } else {
+      console.error('获取文件列表失败:', response.statusText)
+      return []
+    }
+  } catch (error) {
+    console.error('获取文件列表出错:', error)
+    return []
+  }
 }
 
 const getStoredFiles = (projectId: string): FileItem[] => {
+  // 保留作为后备，但优先使用API数据
   if (typeof window !== 'undefined') {
     const stored = localStorage.getItem(`project_${projectId}_files`)
     if (stored) {
@@ -302,7 +332,7 @@ const getStoredFiles = (projectId: string): FileItem[] => {
       }
     }
   }
-  return mockProjectFiles[projectId] || []
+  return [] // 移除模拟数据，返回空数组
 }
 
 const saveFilesToStorage = (projectId: string, files: FileItem[]) => {
@@ -311,18 +341,58 @@ const saveFilesToStorage = (projectId: string, files: FileItem[]) => {
   }
 }
 
+// 添加API调用函数
+const fetchProjectInfo = async (projectId: string): Promise<Project | null> => {
+  try {
+    // 这里应该调用真实的项目API，暂时返回基础信息
+    // 在实际应用中，应该有 /api/v1/projects/{id} 端点
+    const mockProject: Project = {
+      id: projectId,
+      name: `项目 ${projectId}`,
+      description: '从API获取的项目描述',
+      stage: '工程开发',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      memberCount: 1,
+      status: 'active',
+      color: 'bg-blue-500'
+    }
+    return mockProject
+  } catch (error) {
+    console.error('获取项目信息失败:', error)
+    return null
+  }
+}
+
+const fetchProjectStats = async (projectId: string) => {
+  try {
+    const response = await fetch(`/api/v1/files?project_id=${projectId}`)
+    if (response.ok) {
+      const files = await response.json()
+      return {
+        fileCount: files.length,
+        totalSize: files.reduce((sum: number, file: any) => sum + (file.file_size || 0), 0)
+      }
+    }
+    return { fileCount: 0, totalSize: 0 }
+  } catch (error) {
+    console.error('获取项目统计失败:', error)
+    return { fileCount: 0, totalSize: 0 }
+  }
+}
+
 export default function ProjectDetailPage() {
   const params = useParams()
   const projectId = params.id as string
 
   // 初始化项目数据
-  const [storedProjects, setStoredProjects] = useState<Record<string, Project>>(mockProjects)
-  const currentProject = storedProjects[projectId] || mockProjects['1']
+  const [storedProjects, setStoredProjects] = useState<Record<string, Project>>(getStoredProjects())
+  const currentProject = storedProjects[projectId] || null
   
   // 初始时使用原始数据，避免SSR水合错误
-  const initialFiles = mockProjectFiles[projectId] || []
+  const initialFiles = getStoredFiles(projectId)
 
-  const [project, setProject] = useState<Project>(currentProject)
+  const [project, setProject] = useState<Project | null>(currentProject)
   const [files, setFiles] = useState<FileItem[]>(initialFiles)
   const [filteredFiles, setFilteredFiles] = useState<FileItem[]>(initialFiles)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
@@ -335,25 +405,70 @@ export default function ProjectDetailPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [fileToTag, setFileToTag] = useState<FileItem | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
+  
+  // 编辑文件状态
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingFile, setEditingFile] = useState<FileItem | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editStage, setEditStage] = useState('')
 
+  // 项目统计状态
+  const [projectStats, setProjectStats] = useState({ fileCount: 0, totalSize: 0 })
+  const [isLoading, setIsLoading] = useState(true)
 
-
-  // 客户端水合完成后再加载localStorage数据
+  // 客户端水合完成后再加载数据
   useEffect(() => {
-    setIsHydrated(true)
-    // 加载项目数据
-    const storedProjectsData = getStoredProjects()
-    setStoredProjects(storedProjectsData)
+    const loadData = async () => {
+      setIsLoading(true)
+      
+      // 从同步服务获取项目信息
+      const projectInfo = projectSync.getProjectById(projectId)
+      if (projectInfo) {
+        setProject(projectInfo)
+      }
+      
+      // 加载文件数据和统计信息
+      try {
+        const [apiFiles, stats] = await Promise.all([
+          fetchProjectFiles(projectId),
+          fetchProjectStats(projectId)
+        ])
+        
+        setFiles(apiFiles)
+        setFilteredFiles(apiFiles)
+        setProjectStats(stats)
+        
+        // 同步更新项目统计到同步服务
+        await projectSync.updateProjectFileStats(projectId)
+        
+      } catch (error) {
+        console.error('加载数据失败:', error)
+        // 如果API失败，显示空状态
+        setFiles([])
+        setFilteredFiles([])
+        setProjectStats({ fileCount: 0, totalSize: 0 })
+      } finally {
+        setIsHydrated(true)
+        setIsLoading(false)
+      }
+    }
     
-    // 加载文件数据
-    const storedFiles = getStoredFiles(projectId)
-    setFiles(storedFiles)
-    setFilteredFiles(storedFiles)
+    loadData()
+
+    // 订阅项目数据变化
+    const unsubscribe = projectSync.subscribe(() => {
+      const updatedProject = projectSync.getProjectById(projectId)
+      if (updatedProject) {
+        setProject(updatedProject)
+      }
+    })
+    
+    return unsubscribe
   }, [projectId])
 
   // 当项目数据更新时，更新当前项目
   useEffect(() => {
-    const updatedProject = storedProjects[projectId] || mockProjects['1']
+    const updatedProject = storedProjects[projectId] || null
     setProject(updatedProject)
   }, [storedProjects, projectId])
 
@@ -368,7 +483,7 @@ export default function ProjectDetailPage() {
           项目已归档
         </h3>
         <p className="text-gray-500 dark:text-gray-400 mb-6">
-          "{project.name}" 项目已被归档，无法访问项目详情。
+          "{project?.name}" 项目已被归档，无法访问项目详情。
         </p>
         <div className="space-y-3">
           <Link href="/dashboard/projects">
@@ -383,21 +498,6 @@ export default function ProjectDetailPage() {
       </div>
     </div>
   )
-
-  // 当项目ID变化时更新文件数据
-  useEffect(() => {
-    if (isHydrated) {
-      // 只在客户端水合完成后加载localStorage数据
-      const storedFiles = getStoredFiles(projectId)
-      setFiles(storedFiles)
-      setFilteredFiles(storedFiles)
-    } else {
-      // 服务端渲染时使用原始数据
-      const originalFiles = mockProjectFiles[projectId] || []
-      setFiles(originalFiles)
-      setFilteredFiles(originalFiles)
-    }
-  }, [projectId, isHydrated])
 
   // 过滤文件
   useEffect(() => {
@@ -526,108 +626,132 @@ export default function ProjectDetailPage() {
     })
   }
 
-  const handleFileUpload = (uploadedFiles: File[]) => {
-    const newFiles: FileItem[] = uploadedFiles.map(file => ({
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: '当前用户',
-      stage: project.stage,
-      tags: [],
-      url: URL.createObjectURL(file),
-      source: 'user' as const
-    }))
-    
-    setFiles(prev => [...newFiles, ...prev])
+  // 封装文件操作后的数据同步
+  const syncAfterFileOperation = async () => {
+    try {
+      const [apiFiles, stats] = await Promise.all([
+        fetchProjectFiles(projectId),
+        fetchProjectStats(projectId)
+      ])
+      setFiles(apiFiles)
+      setFilteredFiles(apiFiles)
+      setProjectStats(stats)
+      
+      // 同步更新到项目服务
+      await projectSync.updateProjectFileStats(projectId)
+    } catch (error) {
+      console.error('同步数据失败:', error)
+    }
+  }
+
+  const handleFileUpload = async (uploadedFiles: File[]) => {
+    // 文件上传会通过FileUpload组件自动处理
+    // 上传成功后重新获取文件列表和统计信息
+    await syncAfterFileOperation()
     setShowUploadModal(false)
   }
 
   const handleRename = async (file: FileItem) => {
-    const newName = prompt('请输入新的文件名:', file.name)
-    if (newName && newName.trim() !== '' && newName !== file.name) {
-      try {
-        // 更新文件列表
-        const updatedFiles = files.map(f => 
-          f.id === file.id 
-            ? { ...f, name: newName.trim() }
-            : f
-        )
-        
-        // 更新状态
-        setFiles(updatedFiles)
-        
-        // 保存到localStorage实现持久化
-        saveFilesToStorage(projectId, updatedFiles)
-        
-        // 在实际应用中，这里应该调用后端API
-        // await fileApi.updateFile(file.id, { original_name: newName.trim() })
-        
-        alert(`文件已重命名为: ${newName.trim()}`)
-      } catch (error) {
-        console.error('重命名失败:', error)
-        alert('重命名失败，请稍后重试')
+    // 设置编辑状态
+    setEditingFile(file)
+    setEditName(file.name)
+    setEditStage(file.stage)
+    setShowEditModal(true)
+  }
+
+  // 处理文件编辑提交
+  const handleEditSubmit = async () => {
+    if (!editingFile || !editName.trim()) {
+      alert('文件名不能为空')
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/v1/files/${editingFile.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          original_name: editName.trim(),
+          stage: editStage
+        }),
+      });
+
+      if (response.ok) {
+        // 重新获取文件列表以确保数据同步
+        await syncAfterFileOperation()
+        setShowEditModal(false)
+        setEditingFile(null)
+        setEditName('')
+        setEditStage('')
+        alert('文件信息已更新')
+      } else {
+        const errorData = await response.json();
+        console.error('编辑失败详情:', errorData);
+        alert(`编辑失败: ${errorData.detail || errorData.message || response.statusText}`);
       }
+    } catch (error) {
+      console.error('编辑失败:', error)
+      alert('编辑失败，请稍后重试')
     }
   }
 
   const handleDownload = async (file: FileItem) => {
     try {
-      // 模拟下载功能 - 创建模拟文件下载
-      const link = document.createElement('a')
+      // 调用后端下载API
+      const response = await fetch(`/api/v1/files/${file.id}/download`);
       
-      // 创建模拟文件内容
-      let content = ''
-      let mimeType = 'text/plain'
-      
-      if (file.type === 'application/pdf') {
-        content = `%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n4 0 obj\n<<\n/Length 44\n>>\nstream\nBT\n/F1 12 Tf\n100 700 Td\n(${file.name}) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000206 00000 n \ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\nstartxref\n299\n%%EOF`
-        mimeType = 'application/pdf'
-      } else if (file.type.includes('word')) {
-        content = `模拟Word文档内容：${file.name}\n\n这是一个模拟的Word文档，实际应用中应该从后端API获取真实文件内容。`
-        mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      } else if (file.type.includes('excel')) {
-        content = `模拟Excel文档内容：${file.name}\n\n这是一个模拟的Excel文档，实际应用中应该从后端API获取真实文件内容。`
-        mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      if (response.ok) {
+        // 获取文件内容
+        const blob = await response.blob();
+        
+        // 创建下载链接
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // 清理URL对象
+        URL.revokeObjectURL(url);
+        
+        console.log('文件下载成功:', file.name);
       } else {
-        content = `模拟文件内容：${file.name}\n\n这是一个模拟文件，实际应用中应该从后端API获取真实文件内容。`
+        const errorData = await response.json();
+        alert(`下载失败: ${errorData.message || response.statusText}`);
       }
-      
-      const blob = new Blob([content], { type: mimeType })
-      const url = URL.createObjectURL(blob)
-      
-      link.href = url
-      link.download = file.name
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      
-      // 清理URL对象
-      URL.revokeObjectURL(url)
-      
-      // 在实际应用中，应该调用真实的API
-      // const blob = await fileApi.downloadFile(file.id)
-      // const url = URL.createObjectURL(blob)
-      // link.href = url
-      // link.download = file.name
-      // document.body.appendChild(link)
-      // link.click()
-      // document.body.removeChild(link)
-      // URL.revokeObjectURL(url)
-      
-      console.log('文件下载成功:', file.name)
     } catch (error) {
-      console.error('下载失败:', error)
-      alert('下载失败，请稍后重试')
+      console.error('下载失败:', error);
+      alert('下载失败，请稍后重试');
     }
   }
 
 
 
-  const handleDelete = (fileId: string) => {
+  const handleDelete = async (fileId: string) => {
     if (confirm('确定要删除这个文件吗？')) {
-      setFiles(prev => prev.filter(f => f.id !== fileId))
+      try {
+        const response = await fetch(`/api/v1/files/${fileId}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          await syncAfterFileOperation()
+          alert('文件删除成功！');
+        } else {
+          const errorData = await response.json();
+          alert(`文件删除失败: ${errorData.message || response.statusText}`);
+        }
+      } catch (error) {
+        console.error('删除文件失败:', error);
+        alert('删除文件失败，请稍后重试');
+      }
     }
   }
 
@@ -654,12 +778,39 @@ export default function ProjectDetailPage() {
 
   const handleOpenAIChat = () => {
     // 直接跳转到AI对话页面，并传递项目ID作为参数
-    window.location.href = `/dashboard/chat?project=${projectId}&name=${encodeURIComponent(project.name)}`
+    window.location.href = `/dashboard/chat?project=${projectId}&name=${encodeURIComponent(project?.name || '')}`
   }
 
   // 如果项目已归档，显示无法访问的提示
-  if (isHydrated && project.status === 'archived') {
+  if (isHydrated && project?.status === 'archived') {
     return renderArchivedProject()
+  }
+
+  // 显示加载状态
+  if (isLoading || !isHydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">加载项目数据中...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // 如果项目不存在
+  if (!project) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">项目不存在</h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">无法找到ID为 {projectId} 的项目</p>
+          <Link href="/dashboard/projects">
+            <Button>返回项目列表</Button>
+          </Link>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -675,7 +826,7 @@ export default function ProjectDetailPage() {
           项目管理
         </Link>
         <span>/</span>
-        <span className="text-gray-900 dark:text-white">{project.name}</span>
+        <span className="text-gray-900 dark:text-white">{project?.name}</span>
       </div>
 
       {/* 项目信息头部 */}
@@ -689,26 +840,26 @@ export default function ProjectDetailPage() {
             </Link>
             <div>
               <div className="flex items-center space-x-3 mb-2">
-                <div className={cn('w-4 h-4 rounded-full', project.color)} />
+                <div className={cn('w-4 h-4 rounded-full', project?.color)} />
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {project.name}
+                  {project?.name}
                 </h1>
               </div>
               <p className="text-gray-600 dark:text-gray-300 mb-4">
-                {project.description}
+                {project?.description}
               </p>
               <div className="flex items-center space-x-6 text-sm text-gray-500 dark:text-gray-400">
                 <div className="flex items-center space-x-1">
                   <CalendarIcon className="h-4 w-4" />
-                  <span>当前阶段: {project.stage}</span>
+                  <span>当前阶段: {project?.stage}</span>
                 </div>
                 <div className="flex items-center space-x-1">
                   <UserGroupIcon className="h-4 w-4" />
-                  <span>{project.memberCount} 名成员</span>
+                  <span>{project?.memberCount} 名成员</span>
                 </div>
                 <div className="flex items-center space-x-1">
                   <FolderIcon className="h-4 w-4" />
-                  <span>{files.length} 个文件</span>
+                  <span>{projectStats.fileCount} 个文件</span>
                 </div>
               </div>
             </div>
@@ -883,6 +1034,13 @@ export default function ProjectDetailPage() {
                         title="标签"
                       >
                         <TagIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                      </button>
+                      <button 
+                        onClick={() => handleDelete(file.id)}
+                        className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
+                        title="删除"
+                      >
+                        <TrashIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
                       </button>
                     </div>
                   </div>
@@ -1071,7 +1229,7 @@ export default function ProjectDetailPage() {
       <Modal
         isOpen={showUploadModal}
         onClose={() => setShowUploadModal(false)}
-        title={`上传文件到 ${project.name}`}
+        title={`上传文件到 ${project?.name}`}
         size="lg"
       >
         <FileUpload
@@ -1079,9 +1237,56 @@ export default function ProjectDetailPage() {
           multiple={true}
           maxFiles={10}
           maxSize={50 * 1024 * 1024} // 50MB
+          projectId={projectId}
         />
       </Modal>
 
+      {/* 编辑文件模态框 */}
+      <Modal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        title={`编辑文件: ${editingFile?.name}`}
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="edit-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              文件名
+            </label>
+            <Input
+              id="edit-name"
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-stage" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              文件阶段
+            </label>
+            <select
+              id="edit-stage"
+              value={editStage}
+              onChange={(e) => setEditStage(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            >
+              <option value="待分类">待分类</option>
+              {PROJECT_STAGES.map(stage => (
+                <option key={stage.name} value={stage.name}>{stage.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setShowEditModal(false)}>
+              取消
+            </Button>
+            <Button onClick={handleEditSubmit}>
+              保存
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
 
       {/* 标签管理器 */}

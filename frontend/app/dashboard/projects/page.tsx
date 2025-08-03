@@ -20,6 +20,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { formatFileSize, cn } from '@/lib/utils'
+import { projectSync } from '@/lib/services/project-sync'
 
 interface Project {
   id: string
@@ -35,86 +36,30 @@ interface Project {
   color: string
 }
 
-// 模拟项目数据
-const mockProjects: Project[] = [
-  {
-    id: '1',
-    name: 'AI智能客服系统',
-    description: '基于大语言模型的智能客服解决方案，提升客户服务效率',
-    stage: '工程开发',
-    createdAt: '2024-01-15T10:00:00Z',
-    updatedAt: '2024-12-28T15:30:00Z',
-    memberCount: 8,
-    fileCount: 45,
-    totalSize: 128 * 1024 * 1024, // 128MB
-    status: 'active',
-    color: 'bg-blue-500'
-  },
-  {
-    id: '2',
-    name: '数据分析平台',
-    description: '企业级数据分析和可视化平台，支持多数据源集成',
-    stage: '数据理解',
-    createdAt: '2024-02-01T09:00:00Z',
-    updatedAt: '2024-12-27T11:20:00Z',
-    memberCount: 6,
-    fileCount: 32,
-    totalSize: 89 * 1024 * 1024, // 89MB
-    status: 'active',
-    color: 'bg-green-500'
-  },
-  {
-    id: '3',
-    name: '推荐系统优化',
-    description: '电商推荐算法优化项目，提升用户体验和转化率',
-    stage: '实施部署',
-    createdAt: '2024-03-10T14:00:00Z',
-    updatedAt: '2024-12-26T16:45:00Z',
-    memberCount: 5,
-    fileCount: 28,
-    totalSize: 67 * 1024 * 1024, // 67MB
-    status: 'completed',
-    color: 'bg-purple-500'
-  },
-  {
-    id: '4',
-    name: '图像识别模型',
-    description: '医疗影像AI诊断辅助系统，提高诊断准确率',
-    stage: '业务调研',
-    createdAt: '2024-04-05T11:00:00Z',
-    updatedAt: '2024-12-25T09:15:00Z',
-    memberCount: 4,
-    fileCount: 18,
-    totalSize: 156 * 1024 * 1024, // 156MB
-    status: 'active',
-    color: 'bg-orange-500'
-  }
-]
+// 移除旧的存储函数，改用同步服务
+// const getStoredProjects = (): Project[] => {
+//   if (typeof window !== 'undefined') {
+//     try {
+//       const stored = localStorage.getItem('ai-projects')
+//       if (stored) {
+//         return JSON.parse(stored)
+//       }
+//     } catch (error) {
+//       console.error('读取项目数据失败:', error)
+//     }
+//   }
+//   return [] // 返回空数组，不使用模拟数据
+// }
 
-// localStorage持久化存储函数
-const getStoredProjects = (): Project[] => {
-  if (typeof window === 'undefined') return mockProjects
+// const saveProjectsToStorage = (projects: Project[]) => {
+//   if (typeof window === 'undefined') return
   
-  try {
-    const stored = localStorage.getItem('ai-projects')
-    if (stored) {
-      return JSON.parse(stored)
-    }
-  } catch (error) {
-    console.error('读取项目数据失败:', error)
-  }
-  return mockProjects
-}
-
-const saveProjectsToStorage = (projects: Project[]) => {
-  if (typeof window === 'undefined') return
-  
-  try {
-    localStorage.setItem('ai-projects', JSON.stringify(projects))
-  } catch (error) {
-    console.error('保存项目数据失败:', error)
-  }
-}
+//   try {
+//     localStorage.setItem('ai-projects', JSON.stringify(projects))
+//   } catch (error) {
+//     console.error('保存项目数据失败:', error)
+//   }
+// }
 
 const statusConfig = {
   active: { label: '进行中', color: 'bg-green-100 text-green-800' },
@@ -123,7 +68,7 @@ const statusConfig = {
 }
 
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>(mockProjects)
+  const [projects, setProjects] = useState<Project[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -144,11 +89,29 @@ export default function ProjectsPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [isHydrated, setIsHydrated] = useState(false)
 
-  // 客户端水合完成后加载localStorage数据
+  // 客户端水合完成后加载数据并订阅变化
   useEffect(() => {
     setIsHydrated(true)
-    const storedProjects = getStoredProjects()
-    setProjects(storedProjects)
+    
+    // 加载初始数据
+    const loadData = async () => {
+      const storedProjects = projectSync.getProjects()
+      setProjects(storedProjects)
+      
+      // 为每个项目更新文件统计
+      for (const project of storedProjects) {
+        projectSync.updateProjectFileStats(project.id)
+      }
+    }
+    
+    loadData()
+    
+    // 订阅数据变化
+    const unsubscribe = projectSync.subscribe(() => {
+      setProjects(projectSync.getProjects())
+    })
+    
+    return unsubscribe
   }, [])
 
   const filteredProjects = projects.filter(project => {
@@ -169,30 +132,16 @@ export default function ProjectsPage() {
 
   const handleDeleteProject = (projectId: string) => {
     if (confirm('确定要删除这个项目吗？此操作不可撤销。')) {
-      const updatedProjects = projects.filter(p => p.id !== projectId)
-      setProjects(updatedProjects)
-      saveProjectsToStorage(updatedProjects)
+      projectSync.deleteProject(projectId)
     }
   }
 
   const handleArchiveProject = (projectId: string) => {
-    const updatedProjects = projects.map(p => 
-      p.id === projectId 
-        ? { ...p, status: (p.status === 'archived' ? 'active' : 'archived') as 'active' | 'archived' | 'completed' }
-        : p
-    )
-    setProjects(updatedProjects)
-    saveProjectsToStorage(updatedProjects)
+    projectSync.archiveProject(projectId)
   }
 
   const handleCompleteProject = (projectId: string) => {
-    const updatedProjects = projects.map(p => 
-      p.id === projectId 
-        ? { ...p, status: 'completed' as 'active' | 'archived' | 'completed', updatedAt: new Date().toISOString() }
-        : p
-    )
-    setProjects(updatedProjects)
-    saveProjectsToStorage(updatedProjects)
+    projectSync.completeProject(projectId)
   }
 
   const handleEditProject = (project: Project) => {
@@ -208,21 +157,12 @@ export default function ProjectsPage() {
 
   const handleUpdateProject = () => {
     if (editingProject && editForm.name.trim()) {
-      const updatedProjects = projects.map(p => 
-        p.id === editingProject.id 
-          ? { 
-              ...p, 
-              name: editForm.name.trim(),
-              description: editForm.description.trim(),
-              stage: editForm.stage,
-              status: editForm.status,
-              updatedAt: new Date().toISOString()
-            }
-          : p
-      )
-      
-      setProjects(updatedProjects)
-      saveProjectsToStorage(updatedProjects)
+      projectSync.updateProject(editingProject.id, {
+        name: editForm.name.trim(),
+        description: editForm.description.trim(),
+        stage: editForm.stage,
+        status: editForm.status
+      })
       
       setShowEditModal(false)
       setEditingProject(null)
@@ -238,23 +178,14 @@ export default function ProjectsPage() {
 
   const handleCreateProject = () => {
     if (createForm.name.trim()) {
-      const newProject: Project = {
-        id: `${Date.now()}`,
+      projectSync.createProject({
         name: createForm.name.trim(),
         description: createForm.description.trim(),
         stage: createForm.stage,
         status: createForm.status,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
         memberCount: 1, // 默认创建者为成员
-        fileCount: 0,
-        totalSize: 0,
         color: getRandomProjectColor()
-      }
-      
-      const updatedProjects = [newProject, ...projects]
-      setProjects(updatedProjects)
-      saveProjectsToStorage(updatedProjects)
+      })
       
       // 重置表单和关闭模态框
       setCreateForm({ name: '', description: '', stage: '售前', status: 'active' })

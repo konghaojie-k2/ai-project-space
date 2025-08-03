@@ -1,58 +1,45 @@
 """
 AI聊天API路由
-处理聊天请求和会话管理
+提供聊天会话管理、消息发送、文档搜索等功能
 """
 
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends
+import asyncio
+import json
+import uuid
+from datetime import datetime
+from typing import List, Dict, Any, Optional, AsyncGenerator
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from loguru import logger
-from datetime import datetime
 
-from ..services.ai_service import ai_service, ChatMessage, ChatResponse
+from ..core.database import get_db
+from ..services.ai_service import ai_service
+from ..models.chat import (
+    ChatMessage, 
+    ChatRequest, 
+    ChatResponse, 
+    MessageResponse, 
+    ConversationCreate,
+    ConversationResponse,
+    StreamEvent,
+    DocumentSearchRequest,
+    DocumentSearchResponse,
+    ProcessDocumentsRequest
+)
 
 router = APIRouter(tags=["chat"])
-
-# 请求和响应模型
-class ChatRequest(BaseModel):
-    """聊天请求模型"""
-    messages: List[ChatMessage]
-    project_id: Optional[str] = None
-    stream: bool = False
-
-class ConversationCreateRequest(BaseModel):
-    """创建会话请求模型"""
-    title: str
-    project_id: Optional[str] = None
-
-class ConversationResponse(BaseModel):
-    """会话响应模型"""
-    id: str
-    title: str
-    project_id: Optional[str] = None
-    project_name: Optional[str] = None
-    last_message: Optional[str] = None
-    message_count: int
-    created_at: datetime
-    updated_at: datetime
-
-class MessageResponse(BaseModel):
-    """消息响应模型"""
-    id: str
-    role: str
-    content: str
-    timestamp: datetime
-    conversation_id: str
 
 # 模拟数据存储（实际项目中应该使用数据库）
 conversations_db = {}
 messages_db = {}
 
 @router.post("/conversations", response_model=ConversationResponse)
-async def create_conversation(request: ConversationCreateRequest):
+async def create_conversation(request: ConversationCreate):
     """创建新会话"""
     try:
-        conversation_id = f"conv_{datetime.now().timestamp()}"
+        conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
         
         conversation = {
             "id": conversation_id,
@@ -113,9 +100,9 @@ async def delete_conversation(conversation_id: str):
         if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
+        # 删除会话和相关消息
         del conversations_db[conversation_id]
-        if conversation_id in messages_db:
-            del messages_db[conversation_id]
+        del messages_db[conversation_id]
         
         logger.info(f"删除会话: {conversation_id}")
         return {"message": "会话删除成功"}
@@ -133,11 +120,8 @@ async def get_messages(conversation_id: str):
         if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        messages = []
-        for msg in messages_db.get(conversation_id, []):
-            messages.append(MessageResponse(**msg))
-        
-        return messages
+        messages = messages_db.get(conversation_id, [])
+        return [MessageResponse(**msg) for msg in messages]
         
     except HTTPException:
         raise
@@ -152,46 +136,64 @@ async def send_message(conversation_id: str, request: ChatRequest):
         if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 获取项目上下文
-        project_context = None
-        if request.project_id:
-            # 这里可以从项目数据库获取项目信息
-            project_context = f"项目ID: {request.project_id}"
-        
-        # 调用AI服务
-        response = await ai_service.chat_completion(
-            messages=request.messages,
-            project_context=project_context,
-            stream=request.stream
-        )
-        
         # 保存用户消息
         user_message = {
-            "id": f"msg_{datetime.now().timestamp()}_user",
+            "id": f"msg_{uuid.uuid4().hex[:8]}",
             "role": "user",
-            "content": request.messages[-1].content if request.messages else "",
+            "content": request.messages[-1]["content"],
             "timestamp": datetime.now(),
             "conversation_id": conversation_id
         }
+        
         messages_db[conversation_id].append(user_message)
         
-        # 保存AI回复
-        ai_message = {
-            "id": f"msg_{datetime.now().timestamp()}_ai",
-            "role": "assistant",
-            "content": response.content,
-            "timestamp": datetime.now(),
-            "conversation_id": conversation_id
-        }
-        messages_db[conversation_id].append(ai_message)
-        
-        # 更新会话信息
-        conversations_db[conversation_id]["last_message"] = request.messages[-1].content if request.messages else ""
-        conversations_db[conversation_id]["message_count"] = len(messages_db[conversation_id])
-        conversations_db[conversation_id]["updated_at"] = datetime.now()
-        
-        logger.info(f"发送消息到会话: {conversation_id}")
-        return response
+        # 调用AI服务获取回复
+        try:
+            ai_response = await ai_service.chat_completion(
+                messages=request.messages,
+                project_context=request.project_id,  # 将project_id作为project_context传递
+                model_name=request.model or "gpt-3.5-turbo"
+            )
+            
+            # 保存AI回复
+            ai_message = {
+                "id": f"msg_{uuid.uuid4().hex[:8]}",
+                "role": "assistant",
+                "content": ai_response.content,
+                "timestamp": datetime.now(),
+                "conversation_id": conversation_id
+            }
+            
+            messages_db[conversation_id].append(ai_message)
+            
+            # 更新会话信息
+            conversations_db[conversation_id]["last_message"] = ai_response.content[:100] + "..."
+            conversations_db[conversation_id]["message_count"] = len(messages_db[conversation_id])
+            conversations_db[conversation_id]["updated_at"] = datetime.now()
+            
+            return ai_response
+            
+        except Exception as ai_error:
+            logger.error(f"AI服务调用失败: {ai_error}")
+            # 返回降级响应
+            fallback_content = f"抱歉，AI服务暂时不可用。您的问题：{request.messages[-1]['content']}"
+            
+            ai_message = {
+                "id": f"msg_{uuid.uuid4().hex[:8]}",
+                "role": "assistant", 
+                "content": fallback_content,
+                "timestamp": datetime.now(),
+                "conversation_id": conversation_id
+            }
+            
+            messages_db[conversation_id].append(ai_message)
+            
+            return ChatResponse(
+                content=fallback_content,
+                model="fallback",
+                sources=[],
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
         
     except HTTPException:
         raise
@@ -199,29 +201,115 @@ async def send_message(conversation_id: str, request: ChatRequest):
         logger.error(f"发送消息失败: {e}")
         raise HTTPException(status_code=500, detail="发送消息失败")
 
-@router.post("/search", response_model=List[dict])
-async def search_documents(query: str, n_results: int = 5):
-    """搜索相关文档"""
+@router.post("/conversations/{conversation_id}/messages/stream")
+async def send_message_stream(conversation_id: str, request: ChatRequest):
+    """流式发送消息"""
     try:
-        documents = await ai_service.search_similar_documents(query, n_results)
-        return documents
+        if conversation_id not in conversations_db:
+            raise HTTPException(status_code=404, detail="会话不存在")
         
-    except Exception as e:
-        logger.error(f"搜索文档失败: {e}")
-        raise HTTPException(status_code=500, detail="搜索文档失败")
-
-@router.post("/documents/process")
-async def process_documents(project_id: str, file_paths: List[str]):
-    """处理项目文档"""
-    try:
-        success = await ai_service.process_project_files(project_id, file_paths)
-        if success:
-            return {"message": "文档处理成功"}
-        else:
-            raise HTTPException(status_code=500, detail="文档处理失败")
+        # 保存用户消息
+        user_message = {
+            "id": f"msg_{uuid.uuid4().hex[:8]}",
+            "role": "user",
+            "content": request.messages[-1]["content"],
+            "timestamp": datetime.now(),
+            "conversation_id": conversation_id
+        }
+        
+        messages_db[conversation_id].append(user_message)
+        
+        async def generate_stream():
+            try:
+                message_id = f"msg_{uuid.uuid4().hex[:8]}"
+                
+                # 发送开始事件
+                start_event = StreamEvent(type="start", message_id=message_id)
+                yield f"data: {start_event.model_dump_json()}\n\n"
+                
+                # 调用AI服务获取流式回复
+                content_buffer = ""
+                async for chunk in ai_service.chat_completion_stream(
+                    messages=request.messages,
+                    project_context=request.project_id,  # 将project_id作为project_context传递
+                    model_name=request.model or "gpt-3.5-turbo"
+                ):
+                    content_buffer += chunk
+                    content_event = StreamEvent(type="content", content=chunk)
+                    yield f"data: {content_event.model_dump_json()}\n\n"
+                
+                # 保存AI回复
+                ai_message = {
+                    "id": message_id,
+                    "role": "assistant",
+                    "content": content_buffer,
+                    "timestamp": datetime.now(),
+                    "conversation_id": conversation_id
+                }
+                
+                messages_db[conversation_id].append(ai_message)
+                
+                # 更新会话信息
+                conversations_db[conversation_id]["last_message"] = content_buffer[:100] + "..."
+                conversations_db[conversation_id]["message_count"] = len(messages_db[conversation_id])
+                conversations_db[conversation_id]["updated_at"] = datetime.now()
+                
+                # 发送结束事件
+                end_event = StreamEvent(type="end", message_id=message_id)
+                yield f"data: {end_event.model_dump_json()}\n\n"
+                
+            except Exception as e:
+                logger.error(f"流式响应失败: {e}")
+                error_event = StreamEvent(type="error", error=str(e))
+                yield f"data: {error_event.model_dump_json()}\n\n"
+        
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
         
     except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"流式发送消息失败: {e}")
+        raise HTTPException(status_code=500, detail="流式发送消息失败")
+
+@router.post("/search", response_model=DocumentSearchResponse)
+async def search_documents(request: DocumentSearchRequest):
+    """搜索相关文档"""
+    try:
+        # 调用AI服务进行文档搜索
+        results = await ai_service.search_documents(
+            query=request.query,
+            n_results=request.n_results,
+            project_id=request.project_id
+        )
+        
+        return DocumentSearchResponse(**results)
+        
+    except Exception as e:
+        logger.error(f"文档搜索失败: {e}")
+        raise HTTPException(status_code=500, detail="文档搜索失败")
+
+@router.post("/documents/process")
+async def process_documents(request: ProcessDocumentsRequest, background_tasks: BackgroundTasks):
+    """处理项目文档"""
+    try:
+        # 在后台处理文档
+        background_tasks.add_task(
+            ai_service.process_project_files,
+            project_id=request.project_id,
+            file_paths=request.file_paths
+        )
+        
+        return {"message": "文档处理任务已启动"}
+        
     except Exception as e:
         logger.error(f"处理文档失败: {e}")
         raise HTTPException(status_code=500, detail="处理文档失败")
@@ -231,20 +319,20 @@ async def health_check():
     """健康检查"""
     try:
         # 检查AI服务状态
-        openai_status = "connected" if ai_service.client else "mock_mode"
-        embedding_status = "ready" if ai_service.embedding_model else "not_ready"
-        vector_db_status = "ready" if ai_service.vector_db else "not_ready"
+        ai_status = await ai_service.health_check()
         
         return {
             "status": "healthy",
+            "timestamp": datetime.now(),
             "services": {
-                "openai": openai_status,
-                "embeddings": embedding_status,
-                "vector_db": vector_db_status
-            },
-            "timestamp": datetime.now().isoformat()
+                "ai_service": ai_status
+            }
         }
         
     except Exception as e:
         logger.error(f"健康检查失败: {e}")
-        raise HTTPException(status_code=500, detail="服务不健康") 
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now(),
+            "error": str(e)
+        } 

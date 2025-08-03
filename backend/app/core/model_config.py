@@ -1,211 +1,234 @@
 """
-模型配置文件
-使用ModelScope管理各种AI模型
+AI模型配置文件
+管理各种AI模型的云端API配置
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 from pathlib import Path
 import os
 
 class ModelConfig(BaseModel):
     """模型配置基类"""
-    name: str
-    model_id: str
-    provider: str = "modelscope"  # modelscope, openai, local
-    device: str = "auto"  # auto, cpu, cuda, mps
-    max_length: int = 2048
+    model_name: str
+    provider: str = "openai"  # openai, anthropic, azure, local
+    description: str = ""
+    max_tokens: int = 2048
     temperature: float = 0.7
     top_p: float = 1.0
     enabled: bool = True
 
 class EmbeddingModelConfig(ModelConfig):
     """嵌入模型配置"""
-    dimension: int = 1024
-    max_length: int = 512
-    normalize: bool = True
-
+    embedding_size: int = 1536
+    max_input_tokens: int = 8192
+    
 class LLMModelConfig(ModelConfig):
     """大语言模型配置"""
     context_length: int = 4096
-    max_new_tokens: int = 1024
-    repetition_penalty: float = 1.1
-    do_sample: bool = True
+    supports_streaming: bool = True
+    supports_functions: bool = False
 
 class MultimodalModelConfig(ModelConfig):
     """多模态模型配置"""
-    vision_model: Optional[str] = None
-    audio_model: Optional[str] = None
-    max_image_size: int = 1024
-    max_audio_length: int = 30  # 秒
+    supported_formats: List[str] = ["image", "text"]
+    max_image_size: int = 20  # MB
+    supports_vision: bool = True
 
 class ModelManager:
     """模型管理器"""
     
     def __init__(self):
-        self.config = self._load_config()
-    
-    def _load_config(self) -> Dict[str, Any]:
-        """加载模型配置"""
-        return {
-            "embedding_models": {
-                "qwen3_embedding_8b": EmbeddingModelConfig(
-                    name="Qwen3-Embedding-8B",
-                    model_id="qwen/Qwen3-Embedding-8B",
-                    provider="modelscope",
-                    device="auto",
-                    dimension=1024,
-                    max_length=512,
-                    normalize=True,
-                    enabled=True
-                ),
-                "bge_large_zh": EmbeddingModelConfig(
-                    name="BGE-Large-ZH",
-                    model_id="BAAI/bge-large-zh-v1.5",
-                    provider="modelscope",
-                    device="auto",
-                    dimension=1024,
-                    max_length=512,
-                    normalize=True,
-                    enabled=True
-                ),
-                "text2vec_chinese": EmbeddingModelConfig(
-                    name="Text2Vec-Chinese",
-                    model_id="shibing624/text2vec-base-chinese",
-                    provider="modelscope",
-                    device="auto",
-                    dimension=768,
-                    max_length=512,
-                    normalize=True,
-                    enabled=True
-                )
-            },
-            "llm_models": {
-                "qwen2_7b": LLMModelConfig(
-                    name="Qwen2-7B",
-                    model_id="qwen/Qwen2-7B-Instruct",
-                    provider="modelscope",
-                    device="auto",
-                    context_length=32768,
-                    max_new_tokens=1024,
-                    temperature=0.7,
-                    top_p=1.0,
-                    repetition_penalty=1.1,
-                    do_sample=True,
-                    enabled=True
-                ),
-                "qwen2_14b": LLMModelConfig(
-                    name="Qwen2-14B",
-                    model_id="qwen/Qwen2-14B-Instruct",
-                    provider="modelscope",
-                    device="auto",
-                    context_length=32768,
-                    max_new_tokens=1024,
-                    temperature=0.7,
-                    top_p=1.0,
-                    repetition_penalty=1.1,
-                    do_sample=True,
-                    enabled=False  # 默认禁用，需要更多显存
-                ),
-                "chatglm3_6b": LLMModelConfig(
-                    name="ChatGLM3-6B",
-                    model_id="ZhipuAI/chatglm3-6b",
-                    provider="modelscope",
-                    device="auto",
-                    context_length=8192,
-                    max_new_tokens=1024,
-                    temperature=0.7,
-                    top_p=1.0,
-                    repetition_penalty=1.1,
-                    do_sample=True,
-                    enabled=True
-                )
-            },
-            "multimodal_models": {
-                "qwen_vl_7b": MultimodalModelConfig(
-                    name="Qwen-VL-7B",
-                    model_id="qwen/Qwen-VL-Chat",
-                    provider="modelscope",
-                    device="auto",
-                    max_image_size=1024,
-                    max_audio_length=30,
-                    enabled=True
-                ),
-                "llava_1_5_7b": MultimodalModelConfig(
-                    name="LLaVA-1.5-7B",
-                    model_id="llava-hf/llava-1.5-7b-hf",
-                    provider="modelscope",
-                    device="auto",
-                    max_image_size=1024,
-                    max_audio_length=30,
-                    enabled=True
-                )
-            },
-            "default_models": {
-                "embedding": "qwen3_embedding_8b",
-                "llm": "qwen2_7b",
-                "multimodal": "qwen_vl_7b"
-            },
-            "model_cache_dir": "./models",
-            "download_mirror": "https://modelscope.cn/api/v1/models",
-            "enable_hf_mirror": True
+        self.embedding_models = {
+            "text-embedding-ada-002": EmbeddingModelConfig(
+                model_name="text-embedding-ada-002",
+                provider="openai",
+                description="OpenAI嵌入模型，适用于文本相似度和搜索",
+                embedding_size=1536,
+                max_input_tokens=8192
+            ),
+            "text-embedding-3-small": EmbeddingModelConfig(
+                model_name="text-embedding-3-small",
+                provider="openai", 
+                description="OpenAI第三代小型嵌入模型",
+                embedding_size=1536,
+                max_input_tokens=8192
+            ),
+            "text-embedding-3-large": EmbeddingModelConfig(
+                model_name="text-embedding-3-large",
+                provider="openai",
+                description="OpenAI第三代大型嵌入模型",
+                embedding_size=3072,
+                max_input_tokens=8192
+            )
+        }
+        
+        self.llm_models = {
+            "gpt-3.5-turbo": LLMModelConfig(
+                model_name="gpt-3.5-turbo",
+                provider="openai",
+                description="OpenAI GPT-3.5 Turbo模型",
+                max_tokens=4096,
+                context_length=16385,
+                supports_streaming=True,
+                supports_functions=True
+            ),
+            "gpt-4": LLMModelConfig(
+                model_name="gpt-4",
+                provider="openai",
+                description="OpenAI GPT-4模型",
+                max_tokens=8192,
+                context_length=8192,
+                supports_streaming=True,
+                supports_functions=True
+            ),
+            "gpt-4-turbo": LLMModelConfig(
+                model_name="gpt-4-turbo",
+                provider="openai",
+                description="OpenAI GPT-4 Turbo模型",
+                max_tokens=4096,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True
+            ),
+            "claude-3-sonnet": LLMModelConfig(
+                model_name="claude-3-sonnet-20240229",
+                provider="anthropic",
+                description="Anthropic Claude 3 Sonnet模型",
+                max_tokens=4096,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=False
+            ),
+            "claude-3-haiku": LLMModelConfig(
+                model_name="claude-3-haiku-20240307",
+                provider="anthropic",
+                description="Anthropic Claude 3 Haiku模型",
+                max_tokens=4096,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=False
+            )
+        }
+        
+        self.multimodal_models = {
+            "gpt-4-vision-preview": MultimodalModelConfig(
+                model_name="gpt-4-vision-preview",
+                provider="openai",
+                description="OpenAI GPT-4 Vision模型，支持图像理解",
+                max_tokens=4096,
+                context_length=128000,
+                supported_formats=["image", "text"],
+                max_image_size=20,
+                supports_vision=True
+            ),
+            "gpt-4o": MultimodalModelConfig(
+                model_name="gpt-4o",
+                provider="openai",
+                description="OpenAI GPT-4 Omni多模态模型",
+                max_tokens=4096,
+                context_length=128000,
+                supported_formats=["image", "text", "audio"],
+                max_image_size=20,
+                supports_vision=True
+            ),
+            "claude-3-opus": MultimodalModelConfig(
+                model_name="claude-3-opus-20240229",
+                provider="anthropic",
+                description="Anthropic Claude 3 Opus多模态模型",
+                max_tokens=4096,
+                context_length=200000,
+                supported_formats=["image", "text"],
+                max_image_size=25,
+                supports_vision=True
+            )
+        }
+        
+        self.global_config = {
+            "cache_enabled": True,
+            "cache_ttl": 3600,
+            "max_concurrent_requests": 10,
+            "retry_attempts": 3,
+            "timeout": 30,
+            "default_embedding_model": "text-embedding-ada-002",
+            "default_llm_model": "gpt-3.5-turbo",
+            "default_multimodal_model": "gpt-4-vision-preview"
         }
     
     def get_embedding_model(self, model_name: Optional[str] = None) -> EmbeddingModelConfig:
         """获取嵌入模型配置"""
         if model_name is None:
-            model_name = self.config["default_models"]["embedding"]
-        return self.config["embedding_models"][model_name]
+            model_name = self.global_config["default_embedding_model"]
+        
+        if model_name not in self.embedding_models:
+            raise ValueError(f"嵌入模型 {model_name} 不存在")
+        
+        return self.embedding_models[model_name]
     
     def get_llm_model(self, model_name: Optional[str] = None) -> LLMModelConfig:
-        """获取大语言模型配置"""
+        """获取LLM模型配置"""
         if model_name is None:
-            model_name = self.config["default_models"]["llm"]
-        return self.config["llm_models"][model_name]
+            model_name = self.global_config["default_llm_model"]
+        
+        if model_name not in self.llm_models:
+            raise ValueError(f"LLM模型 {model_name} 不存在")
+        
+        return self.llm_models[model_name]
     
     def get_multimodal_model(self, model_name: Optional[str] = None) -> MultimodalModelConfig:
         """获取多模态模型配置"""
         if model_name is None:
-            model_name = self.config["default_models"]["multimodal"]
-        return self.config["multimodal_models"][model_name]
+            model_name = self.global_config["default_multimodal_model"]
+        
+        if model_name not in self.multimodal_models:
+            raise ValueError(f"多模态模型 {model_name} 不存在")
+        
+        return self.multimodal_models[model_name]
     
-    def list_available_models(self) -> Dict[str, Any]:
-        """列出所有可用模型"""
-        return {
-            "embedding_models": {
-                name: config.dict() 
-                for name, config in self.config["embedding_models"].items() 
-                if config.enabled
-            },
-            "llm_models": {
-                name: config.dict() 
-                for name, config in self.config["llm_models"].items() 
-                if config.enabled
-            },
-            "multimodal_models": {
-                name: config.dict() 
-                for name, config in self.config["multimodal_models"].items() 
-                if config.enabled
-            }
-        }
-    
-    def update_model_config(self, model_type: str, model_name: str, **kwargs):
-        """更新模型配置"""
+    def list_models(self, model_type: Optional[str] = None) -> Dict[str, Any]:
+        """列出所有模型"""
         if model_type == "embedding":
-            if model_name in self.config["embedding_models"]:
-                for key, value in kwargs.items():
-                    if hasattr(self.config["embedding_models"][model_name], key):
-                        setattr(self.config["embedding_models"][model_name], key, value)
+            return {name: config.model_dump() for name, config in self.embedding_models.items()}
         elif model_type == "llm":
-            if model_name in self.config["llm_models"]:
-                for key, value in kwargs.items():
-                    if hasattr(self.config["llm_models"][model_name], key):
-                        setattr(self.config["llm_models"][model_name], key, value)
+            return {name: config.model_dump() for name, config in self.llm_models.items()}
         elif model_type == "multimodal":
-            if model_name in self.config["multimodal_models"]:
-                for key, value in kwargs.items():
-                    if hasattr(self.config["multimodal_models"][model_name], key):
-                        setattr(self.config["multimodal_models"][model_name], key, value)
+            return {name: config.model_dump() for name, config in self.multimodal_models.items()}
+        else:
+            return {
+                "embedding": {name: config.model_dump() for name, config in self.embedding_models.items()},
+                "llm": {name: config.model_dump() for name, config in self.llm_models.items()},
+                "multimodal": {name: config.model_dump() for name, config in self.multimodal_models.items()}
+            }
+    
+    def add_model(self, model_type: str, model_name: str, config: ModelConfig):
+        """添加新模型"""
+        if model_type == "embedding" and isinstance(config, EmbeddingModelConfig):
+            self.embedding_models[model_name] = config
+        elif model_type == "llm" and isinstance(config, LLMModelConfig):
+            self.llm_models[model_name] = config
+        elif model_type == "multimodal" and isinstance(config, MultimodalModelConfig):
+            self.multimodal_models[model_name] = config
+        else:
+            raise ValueError(f"无效的模型类型或配置: {model_type}")
+    
+    def remove_model(self, model_type: str, model_name: str):
+        """移除模型"""
+        if model_type == "embedding" and model_name in self.embedding_models:
+            del self.embedding_models[model_name]
+        elif model_type == "llm" and model_name in self.llm_models:
+            del self.llm_models[model_name]
+        elif model_type == "multimodal" and model_name in self.multimodal_models:
+            del self.multimodal_models[model_name]
+        else:
+            raise ValueError(f"模型不存在: {model_type}/{model_name}")
+    
+    def update_global_config(self, **kwargs):
+        """更新全局配置"""
+        self.global_config.update(kwargs)
+    
+    def get_global_config(self) -> Dict[str, Any]:
+        """获取全局配置"""
+        return self.global_config.copy()
 
 # 全局模型管理器实例
 model_manager = ModelManager() 

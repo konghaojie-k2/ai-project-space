@@ -1,6 +1,6 @@
 """
-模型管理API
-用于管理ModelScope模型
+AI模型管理API
+管理云端AI模型配置和状态
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -15,37 +15,29 @@ router = APIRouter(prefix="/models", tags=["模型管理"])
 
 class ModelInfo(BaseModel):
     """模型信息"""
-    name: str
-    model_id: str
+    model_name: str
     provider: str
-    device: str
-    enabled: bool
-    dimension: Optional[int] = None
+    description: str
+    max_tokens: Optional[int] = None
+    embedding_size: Optional[int] = None
     context_length: Optional[int] = None
+    supported_formats: Optional[List[str]] = None
+    enabled: bool = True
 
-class ModelLoadRequest(BaseModel):
-    """模型加载请求"""
+class ModelTestRequest(BaseModel):
+    """模型测试请求"""
     model_type: str  # "embedding", "llm", "multimodal"
-    model_name: str
-    force_reload: bool = False
-
-class ModelUpdateRequest(BaseModel):
-    """模型配置更新请求"""
-    model_type: str
-    model_name: str
-    enabled: Optional[bool] = None
-    device: Optional[str] = None
-    temperature: Optional[float] = None
-    max_length: Optional[int] = None
+    model_name: Optional[str] = None
+    test_input: Optional[str] = None
 
 @router.get("/", response_model=Dict[str, Any])
-async def list_models():
+async def list_all_models():
     """列出所有可用模型"""
     try:
         return {
-            "available_models": model_manager.list_available_models(),
+            "available_models": model_manager.list_models(),
             "loaded_models": model_loader.list_loaded_models(),
-            "default_models": model_manager.config["default_models"]
+            "global_config": model_manager.get_global_config()
         }
     except Exception as e:
         logger.error(f"获取模型列表失败: {e}")
@@ -56,14 +48,16 @@ async def list_embedding_models():
     """列出嵌入模型"""
     try:
         models = []
-        for name, config in model_manager.config["embedding_models"].items():
+        embedding_models = model_manager.list_models("embedding")
+        
+        for name, config in embedding_models.items():
             models.append(ModelInfo(
-                name=config.name,
-                model_id=config.model_id,
-                provider=config.provider,
-                device=config.device,
-                enabled=config.enabled,
-                dimension=config.dimension
+                model_name=config["model_name"],
+                provider=config["provider"],
+                description=config["description"],
+                embedding_size=config["embedding_size"],
+                max_tokens=config.get("max_input_tokens"),
+                enabled=config["enabled"]
             ))
         return models
     except Exception as e:
@@ -75,14 +69,16 @@ async def list_llm_models():
     """列出大语言模型"""
     try:
         models = []
-        for name, config in model_manager.config["llm_models"].items():
+        llm_models = model_manager.list_models("llm")
+        
+        for name, config in llm_models.items():
             models.append(ModelInfo(
-                name=config.name,
-                model_id=config.model_id,
-                provider=config.provider,
-                device=config.device,
-                enabled=config.enabled,
-                context_length=config.context_length
+                model_name=config["model_name"],
+                provider=config["provider"],
+                description=config["description"],
+                max_tokens=config["max_tokens"],
+                context_length=config["context_length"],
+                enabled=config["enabled"]
             ))
         return models
     except Exception as e:
@@ -94,141 +90,173 @@ async def list_multimodal_models():
     """列出多模态模型"""
     try:
         models = []
-        for name, config in model_manager.config["multimodal_models"].items():
+        multimodal_models = model_manager.list_models("multimodal")
+        
+        for name, config in multimodal_models.items():
             models.append(ModelInfo(
-                name=config.name,
-                model_id=config.model_id,
-                provider=config.provider,
-                device=config.device,
-                enabled=config.enabled
+                model_name=config["model_name"],
+                provider=config["provider"],
+                description=config["description"],
+                max_tokens=config["max_tokens"],
+                context_length=config["context_length"],
+                supported_formats=config["supported_formats"],
+                enabled=config["enabled"]
             ))
         return models
     except Exception as e:
         logger.error(f"获取多模态模型列表失败: {e}")
         raise HTTPException(status_code=500, detail="获取多模态模型列表失败")
 
-@router.post("/load")
-async def load_model(request: ModelLoadRequest):
-    """加载模型"""
+@router.post("/load/{model_type}")
+async def load_model(model_type: str, model_name: Optional[str] = None):
+    """加载云端模型服务"""
     try:
-        model_key = f"{request.model_type}_{request.model_name}"
-        
-        if not request.force_reload and model_key in model_loader.models:
-            return {"message": f"模型 {request.model_name} 已经加载", "status": "already_loaded"}
-        
-        # 根据模型类型加载
-        if request.model_type == "embedding":
-            model_info = model_loader.load_embedding_model(request.model_name)
-        elif request.model_type == "llm":
-            model_info = model_loader.load_llm_model(request.model_name)
-        elif request.model_type == "multimodal":
-            model_info = model_loader.load_multimodal_model(request.model_name)
-        else:
+        if model_type not in ["embedding", "llm", "multimodal"]:
             raise HTTPException(status_code=400, detail="不支持的模型类型")
         
-        if model_info:
+        model = model_loader.get_model(model_type, model_name)
+        if model:
+            model_info = model_loader.get_model_info(model_type, model_name)
             return {
-                "message": f"模型 {request.model_name} 加载成功",
-                "status": "loaded",
-                "model_info": {
-                    "name": model_info['config'].name,
-                    "provider": model_info['config'].provider,
-                    "device": model_info['config'].device
-                }
+                "message": f"云端{model_type}模型准备就绪",
+                "status": "ready",
+                "model_info": model_info
             }
         else:
-            raise HTTPException(status_code=500, detail=f"模型 {request.model_name} 加载失败")
+            raise HTTPException(status_code=500, detail=f"模型初始化失败")
             
     except Exception as e:
-        logger.error(f"加载模型失败: {e}")
-        raise HTTPException(status_code=500, detail=f"加载模型失败: {str(e)}")
+        logger.error(f"准备模型失败: {e}")
+        raise HTTPException(status_code=500, detail=f"准备模型失败: {str(e)}")
 
-@router.post("/unload/{model_key}")
-async def unload_model(model_key: str):
+@router.delete("/unload/{model_type}")
+async def unload_model(model_type: str, model_name: Optional[str] = None):
     """卸载模型"""
     try:
-        if model_key in model_loader.models:
-            model_loader.unload_model(model_key)
-            return {"message": f"模型 {model_key} 卸载成功", "status": "unloaded"}
-        else:
-            return {"message": f"模型 {model_key} 未加载", "status": "not_loaded"}
+        model_loader.unload_model(model_type, model_name)
+        return {
+            "message": f"模型 {model_type}/{model_name} 卸载成功",
+            "status": "unloaded"
+        }
     except Exception as e:
         logger.error(f"卸载模型失败: {e}")
         raise HTTPException(status_code=500, detail="卸载模型失败")
-
-@router.put("/config")
-async def update_model_config(request: ModelUpdateRequest):
-    """更新模型配置"""
-    try:
-        model_manager.update_model_config(
-            request.model_type,
-            request.model_name,
-            **request.dict(exclude_unset=True, exclude={"model_type", "model_name"})
-        )
-        return {"message": f"模型 {request.model_name} 配置更新成功", "status": "updated"}
-    except Exception as e:
-        logger.error(f"更新模型配置失败: {e}")
-        raise HTTPException(status_code=500, detail="更新模型配置失败")
 
 @router.get("/status")
 async def get_model_status():
     """获取模型状态"""
     try:
+        health_check = model_loader.health_check()
         return {
-            "loaded_models": model_loader.list_loaded_models(),
-            "total_models": len(model_loader.models),
-            "memory_usage": "N/A",  # 可以添加内存使用统计
-            "gpu_usage": "N/A"      # 可以添加GPU使用统计
+            "loaded_models": health_check["model_list"],
+            "total_loaded": health_check["loaded_models"],
+            "mode": health_check["mode"],
+            "status": health_check["status"],
+            "cache_dir": health_check["cache_dir"]
         }
     except Exception as e:
         logger.error(f"获取模型状态失败: {e}")
         raise HTTPException(status_code=500, detail="获取模型状态失败")
 
-@router.post("/test/{model_type}")
-async def test_model(model_type: str, model_name: Optional[str] = None):
-    """测试模型"""
+@router.post("/test")
+async def test_model(request: ModelTestRequest):
+    """测试模型功能"""
     try:
+        model_type = request.model_type
+        model_name = request.model_name
+        test_input = request.test_input or "测试输入"
+        
         if model_type == "embedding":
             # 测试嵌入模型
-            test_text = "这是一个测试文本"
-            embedding = model_loader.get_embedding(test_text, model_name)
-            return {
-                "message": "嵌入模型测试成功",
-                "test_text": test_text,
-                "embedding_shape": embedding.shape,
-                "embedding_sample": embedding[:5].tolist()
-            }
+            model = model_loader.get_model("embedding", model_name)
+            if model:
+                # 模拟嵌入测试
+                test_texts = [test_input]
+                embeddings = model.encode(test_texts)
+                return {
+                    "message": "嵌入模型测试成功",
+                    "model_name": model.model_name,
+                    "test_input": test_input,
+                    "embedding_shape": embeddings.shape,
+                    "embedding_sample": embeddings[0][:5].tolist()
+                }
+            else:
+                raise HTTPException(status_code=404, detail="嵌入模型未找到")
+                
         elif model_type == "llm":
             # 测试LLM模型
-            test_prompt = "你好，请简单介绍一下自己。"
-            response = model_loader.generate_text(test_prompt, model_name)
-            return {
-                "message": "LLM模型测试成功",
-                "test_prompt": test_prompt,
-                "response": response[:200] + "..." if len(response) > 200 else response
-            }
+            model = model_loader.get_model("llm", model_name)
+            if model:
+                response = model.generate(test_input)
+                return {
+                    "message": "LLM模型测试成功",
+                    "model_name": model.model_name,
+                    "test_input": test_input,
+                    "response": response[:200] + "..." if len(response) > 200 else response
+                }
+            else:
+                raise HTTPException(status_code=404, detail="LLM模型未找到")
+                
         elif model_type == "multimodal":
             # 测试多模态模型
-            test_text = "请描述这张图片"
-            response = model_loader.process_multimodal(test_text, None, model_name)
-            return {
-                "message": "多模态模型测试成功",
-                "test_text": test_text,
-                "response": response
-            }
+            model = model_loader.get_model("multimodal", model_name)
+            if model:
+                response = model.process_multimodal({"text": test_input})
+                return {
+                    "message": "多模态模型测试成功",
+                    "model_name": model.model_name,
+                    "test_input": test_input,
+                    "response": response
+                }
+            else:
+                raise HTTPException(status_code=404, detail="多模态模型未找到")
         else:
             raise HTTPException(status_code=400, detail="不支持的模型类型")
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"测试模型失败: {e}")
         raise HTTPException(status_code=500, detail=f"测试模型失败: {str(e)}")
 
-@router.delete("/clear")
-async def clear_all_models():
-    """清除所有模型"""
+@router.get("/info/{model_type}")
+async def get_model_info(model_type: str, model_name: Optional[str] = None):
+    """获取模型详细信息"""
     try:
-        model_loader.clear_all_models()
-        return {"message": "所有模型已清除", "status": "cleared"}
+        if model_type not in ["embedding", "llm", "multimodal"]:
+            raise HTTPException(status_code=400, detail="不支持的模型类型")
+        
+        model_info = model_loader.get_model_info(model_type, model_name)
+        if model_info:
+            return model_info
+        else:
+            raise HTTPException(status_code=404, detail="模型信息未找到")
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"清除模型失败: {e}")
-        raise HTTPException(status_code=500, detail="清除模型失败") 
+        logger.error(f"获取模型信息失败: {e}")
+        raise HTTPException(status_code=500, detail="获取模型信息失败")
+
+@router.put("/config")
+async def update_global_config(**config_updates):
+    """更新全局配置"""
+    try:
+        model_manager.update_global_config(**config_updates)
+        return {
+            "message": "全局配置更新成功",
+            "status": "updated",
+            "config": model_manager.get_global_config()
+        }
+    except Exception as e:
+        logger.error(f"更新全局配置失败: {e}")
+        raise HTTPException(status_code=500, detail="更新全局配置失败")
+
+@router.get("/health")
+async def health_check():
+    """模型服务健康检查"""
+    try:
+        return model_loader.health_check()
+    except Exception as e:
+        logger.error(f"健康检查失败: {e}")
+        raise HTTPException(status_code=500, detail="健康检查失败") 
