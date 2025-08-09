@@ -4,7 +4,7 @@ AI模型加载器
 """
 
 import os
-import torch
+# 移除不必要的torch导入 - 云端API模式不需要
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from loguru import logger

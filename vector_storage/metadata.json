@@ -1,0 +1,28 @@
+{
+  "1754731713583_3614f53f-a480-48c5-8392-eeda2edcaa62.pdf": {
+    "file_name": "3614f53f-a480-48c5-8392-eeda2edcaa62.pdf",
+    "project_id": "1754731713583",
+    "chunks_count": 1,
+    "metadata": {
+      "project_id": "1754731713583",
+      "file_path": "uploads/3614f53f-a480-48c5-8392-eeda2edcaa62.pdf",
+      "file_type": ".pdf",
+      "processed_at": "5899.843"
+    }
+  },
+  "da81f1c7-6157-4e46-93fd-d0e5abdc8b1e": {
+    "file_name": "数据分布类型指南报告 (1).pdf",
+    "project_id": "1754731713583",
+    "chunks_count": 43,
+    "metadata": {
+      "file_id": "da81f1c7-6157-4e46-93fd-d0e5abdc8b1e",
+      "project_id": "1754731713583",
+      "file_name": "数据分布类型指南报告 (1).pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-08-09T17:58:32.036504",
+      "content_length": 34043
+    }
+  }
+}

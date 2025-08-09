@@ -547,3 +547,99 @@ class FileService:
         except Exception as e:
             logger.error(f"搜索文件失败: {e}")
             raise 
+    
+    def mark_file_processed(self, file_id: str) -> bool:
+        """
+        标记文件已处理（已索引到向量数据库）
+        
+        Args:
+            file_id: 文件ID
+            
+        Returns:
+            bool: 标记是否成功
+        """
+        try:
+            file_record = self.db.query(FileRecord).filter(
+                and_(
+                    FileRecord.id == file_id,
+                    FileRecord.is_deleted == False
+                )
+            ).first()
+            
+            if not file_record:
+                logger.warning(f"文件不存在或已删除: {file_id}")
+                return False
+            
+            file_record.is_processed = True
+            self.db.commit()
+            
+            logger.info(f"文件已标记为已处理: {file_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"标记文件已处理失败: {e}")
+            self.db.rollback()
+            return False
+    
+    def get_files_by_project(self, project_id: str) -> List[FileRecord]:
+        """
+        获取项目的所有文件
+        
+        Args:
+            project_id: 项目ID
+            
+        Returns:
+            List[FileRecord]: 文件列表
+        """
+        try:
+            files = self.db.query(FileRecord).filter(
+                and_(
+                    FileRecord.project_id == project_id,
+                    FileRecord.is_deleted == False
+                )
+            ).all()
+            
+            return files
+            
+        except Exception as e:
+            logger.error(f"获取项目文件失败: {e}")
+            return []
+    
+    def get_all_unprocessed_files(self) -> List[FileRecord]:
+        """
+        获取所有未处理的文件
+        
+        Returns:
+            List[FileRecord]: 文件列表
+        """
+        try:
+            files = self.db.query(FileRecord).filter(
+                and_(
+                    FileRecord.is_deleted == False,
+                    FileRecord.is_processed == False
+                )
+            ).all()
+            
+            return files
+            
+        except Exception as e:
+            logger.error(f"获取未处理文件失败: {e}")
+            return []
+    
+    def get_all_files(self) -> List[FileRecord]:
+        """
+        获取所有文件
+        
+        Returns:
+            List[FileRecord]: 文件列表
+        """
+        try:
+            files = self.db.query(FileRecord).filter(
+                FileRecord.is_deleted == False
+            ).all()
+            
+            return files
+            
+        except Exception as e:
+            logger.error(f"获取所有文件失败: {e}")
+            return [] 

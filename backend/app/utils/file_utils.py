@@ -13,7 +13,7 @@ except ImportError:
 
 # 文件内容提取相关导入
 try:
-    import PyPDF2
+    import pypdf
     import pdfplumber
     HAS_PDF = True
 except ImportError:
@@ -218,18 +218,18 @@ def extract_text_from_pdf(file_stream: io.BytesIO) -> str:
                     if page_text:
                         text += page_text + "\n"
         except Exception as e:
-            logger.warning(f"pdfplumber提取失败，尝试PyPDF2: {e}")
+            logger.warning(f"pdfplumber提取失败，尝试pypdf: {e}")
             
-            # 回退到PyPDF2
+            # 回退到pypdf
             file_stream.seek(0)
             try:
-                reader = PyPDF2.PdfReader(file_stream)
+                reader = pypdf.PdfReader(file_stream)
                 for page in reader.pages:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
             except Exception as e2:
-                logger.error(f"PyPDF2提取也失败: {e2}")
+                logger.error(f"pypdf提取也失败: {e2}")
         
         return text.strip()
         

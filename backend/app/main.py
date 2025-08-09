@@ -1,3 +1,7 @@
+import os
+# 🔧 设置OpenMP环境变量，防止库冲突 - 必须在任何AI库导入之前设置
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response

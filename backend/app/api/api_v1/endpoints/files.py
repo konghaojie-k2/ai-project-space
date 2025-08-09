@@ -40,10 +40,8 @@ async def upload_files(
     上传文件到MinIO并记录到数据库
     """
     try:
-        app_logger.info(f"🔥 开始文件上传 - 接收到 {len(files)} 个文件")
-        app_logger.info(f"🔥 上传参数 - stage: {stage}, project_id: {project_id}, tags: {tags}, description: {description}")
-        
         uploaded_files = []
+
         tags_list = tags.split(",") if tags else []
         
         for i, file in enumerate(files):
@@ -111,6 +109,62 @@ async def upload_files(
                 uploaded_files.append(file_record)
                 
                 app_logger.info(f"🔥 文件上传成功: {file.filename} -> {stored_filename}")
+                
+                # 🚀 自动提取内容并索引到向量数据库
+                try:
+                    app_logger.info(f"🤖 开始自动提取文件内容: {file.filename}")
+                    
+                    # 重新读取文件数据用于内容提取
+                    await file.seek(0)  # 重置文件指针
+                    file_data = await file.read()
+                    
+                    # 提取文件内容
+                    content = await file_service.extract_content(file_data, file.content_type or "")
+                    
+                    if content and content.strip():
+                        app_logger.info(f"🤖 内容提取成功，长度: {len(content)} 字符")
+                        
+                        # 更新文件内容到数据库
+                        await file_service.update_file_content(file_record.id, content)
+                        
+                        # 索引到向量数据库
+                        if project_id:
+                            from app.services.ai_service import ai_service
+                            
+                            metadata = {
+                                "file_id": file_record.id,
+                                "project_id": project_id,
+                                "file_name": file.filename,
+                                "file_type": file.content_type,
+                                "stage": stage,
+                                "tags": tags_list,
+                                "upload_time": datetime.now().isoformat(),
+                                "content_length": len(content)
+                            }
+                            
+                            success = await ai_service.add_document_to_vector_db(
+                                content=content,
+                                file_id=file_record.id,
+                                file_name=file.filename,
+                                project_id=project_id,
+                                metadata=metadata
+                            )
+                            
+                            if success:
+                                app_logger.info(f"🤖 文件已成功索引到向量数据库: {file.filename}")
+                                # 标记文件已处理
+                                file_service.mark_file_processed(file_record.id)
+                            else:
+                                app_logger.warning(f"🤖 文件索引到向量数据库失败: {file.filename}")
+                        else:
+                            app_logger.info(f"🤖 无项目ID，跳过向量索引: {file.filename}")
+                    else:
+                        app_logger.warning(f"🤖 文件内容为空或提取失败: {file.filename}")
+                        
+                except Exception as index_error:
+                    app_logger.error(f"🤖 自动索引失败: {file.filename}, 错误: {str(index_error)}")
+                    # 索引失败不影响文件上传成功
+                
             except Exception as db_error:
                 app_logger.error(f"🔥 数据库操作失败: {str(db_error)}")
                 raise
@@ -354,9 +408,148 @@ async def get_file_stats(
     获取文件统计信息
     """
     try:
-        stats = await file_service.get_file_stats()
-        return stats
+        stats = file_service.get_file_stats()
+        return {"message": "获取统计信息成功", "data": stats}
         
     except Exception as e:
         app_logger.error(f"获取文件统计失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取文件统计失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"获取文件统计失败: {str(e)}")
+
+@router.post("/batch-index")
+async def batch_index_files(
+    project_id: Optional[str] = None,
+    force_reindex: bool = False,
+    file_service: FileService = Depends(get_file_service),
+    storage_service: LocalFileService = Depends(get_storage_service)
+):
+    """
+    批量索引文件到向量数据库
+    
+    Args:
+        project_id: 项目ID，如果指定则只索引该项目的文件
+        force_reindex: 是否强制重新索引已处理的文件
+    """
+    try:
+        from app.services.ai_service import ai_service
+        
+        # 获取需要索引的文件
+        if project_id:
+            files = file_service.get_files_by_project(project_id)
+        else:
+            files = file_service.get_all_unprocessed_files() if not force_reindex else file_service.get_all_files()
+        
+        app_logger.info(f"🤖 开始批量索引，共 {len(files)} 个文件")
+        
+        indexed_count = 0
+        failed_count = 0
+        
+        for file_record in files:
+            try:
+                # 跳过已处理的文件（除非强制重新索引）
+                if file_record.is_processed and not force_reindex:
+                    continue
+                
+                app_logger.info(f"🤖 正在索引文件: {file_record.original_name}")
+                
+                # 从存储获取文件数据
+                file_data = await storage_service.download_file(
+                    object_name=file_record.stored_name
+                )
+                
+                # 提取文件内容
+                content = await file_service.extract_content(file_data, file_record.file_type)
+                
+                if content and content.strip():
+                    # 更新文件内容到数据库
+                    await file_service.update_file_content(file_record.id, content)
+                    
+                    # 索引到向量数据库
+                    metadata = {
+                        "file_id": file_record.id,
+                        "project_id": file_record.project_id,
+                        "file_name": file_record.original_name,
+                        "file_type": file_record.file_type,
+                        "stage": file_record.stage,
+                        "tags": file_record.tags or [],
+                        "upload_time": file_record.created_at.isoformat() if file_record.created_at else datetime.now().isoformat(),
+                        "content_length": len(content)
+                    }
+                    
+                    document_id = f"file_{file_record.id}"
+                    success = await ai_service.add_document_to_vector_db(
+                        content=content,
+                        file_id=file_record.id,
+                        file_name=file_record.original_name,
+                        project_id=file_record.project_id,
+                        metadata=metadata
+                    )
+                    
+                    if success:
+                        # 标记文件已处理
+                        file_service.mark_file_processed(file_record.id)
+                        indexed_count += 1
+                        app_logger.info(f"🤖 文件索引成功: {file_record.original_name}")
+                    else:
+                        failed_count += 1
+                        app_logger.warning(f"🤖 文件索引失败: {file_record.original_name}")
+                else:
+                    app_logger.warning(f"🤖 文件内容为空，跳过索引: {file_record.original_name}")
+                    
+            except Exception as file_error:
+                failed_count += 1
+                app_logger.error(f"🤖 处理文件失败: {file_record.original_name}, 错误: {str(file_error)}")
+        
+        app_logger.info(f"🤖 批量索引完成，成功: {indexed_count}, 失败: {failed_count}")
+        
+        return {
+            "message": "批量索引完成",
+            "indexed_count": indexed_count,
+            "failed_count": failed_count,
+            "total_processed": indexed_count + failed_count
+        }
+        
+    except Exception as e:
+        app_logger.error(f"批量索引失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量索引失败: {str(e)}")
+
+@router.get("/search-context")
+async def search_file_context(
+    query: str,
+    project_id: Optional[str] = None,
+    limit: int = 5
+):
+    """
+    搜索文件上下文（用于AI问答）
+    
+    Args:
+        query: 搜索查询
+        project_id: 项目ID筛选
+        limit: 返回结果数量限制
+    """
+    try:
+        from app.services.ai_service import AIService
+        ai_service = AIService()
+        
+        # 搜索相似文档
+        results = await ai_service.search_similar_documents(
+            query=query,
+            n_results=limit
+        )
+        
+        # 过滤项目相关结果
+        if project_id:
+            results = [
+                result for result in results
+                if result.get('metadata', {}).get('project_id') == project_id
+            ]
+        
+        return {
+            "message": "搜索完成",
+            "query": query,
+            "project_id": project_id,
+            "results": results
+        }
+        
+    except Exception as e:
+        app_logger.error(f"搜索文件上下文失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"搜索文件上下文失败: {str(e)}") 

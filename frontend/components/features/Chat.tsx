@@ -3,7 +3,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import { PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/outline';
+import { 
+  PaperAirplaneIcon, 
+  StopIcon, 
+  BookmarkIcon,
+  ClipboardDocumentIcon
+} from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
 
 // 消息类型定义
@@ -21,6 +26,7 @@ interface ChatProps {
   messages: Message[];
   onSendMessage: (content: string) => void;
   onStopGeneration?: () => void;
+  onSaveToDraft?: (message: Message) => void;
   isLoading?: boolean;
   className?: string;
 }
@@ -29,6 +35,7 @@ export const Chat: React.FC<ChatProps> = ({
   messages,
   onSendMessage,
   onStopGeneration,
+  onSaveToDraft,
   isLoading = false,
   className
 }) => {
@@ -179,10 +186,11 @@ export const Chat: React.FC<ChatProps> = ({
 
               {/* AI助手消息 */}
               {message.role === 'assistant' && (
-                <div className="flex items-start gap-2 max-w-[80%]">
+                <div className="flex items-start gap-2 max-w-[80%] group">
                   <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white text-sm">
                     AI
                   </div>
+                  <div className="flex-1">
                   <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-2">
                     <div className="text-sm text-gray-800">
                       {message.status === 'sending' && !message.content ? (
@@ -211,6 +219,31 @@ export const Chat: React.FC<ChatProps> = ({
                         {message.status === 'sending' ? '发送中...' : 
                          message.status === 'sent' ? '已发送' : 
                          message.status === 'error' ? '发送失败' : ''}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* AI消息操作按钮 */}
+                    {message.status === 'sent' && message.content && onSaveToDraft && (
+                      <div className="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => onSaveToDraft(message)}
+                          className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors"
+                          title="暂存这个回答"
+                        >
+                          <BookmarkIcon className="w-3 h-3" />
+                          暂存
+                        </button>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(message.content);
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 text-xs bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+                          title="复制回答"
+                        >
+                          <ClipboardDocumentIcon className="w-3 h-3" />
+                          复制
+                        </button>
                       </div>
                     )}
                   </div>

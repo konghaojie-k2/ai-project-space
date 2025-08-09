@@ -27,7 +27,7 @@ interface UploadFile {
   size: number
   type: string
   progress?: number
-  status?: 'uploading' | 'success' | 'error'
+  status?: 'pending' | 'uploading' | 'success' | 'error'
   error?: string
 }
 
@@ -56,50 +56,51 @@ export function FileUpload({
 }: FileUploadProps) {
   const [uploadedFiles, setUploadedFiles] = useState<UploadFile[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [embeddingStatus, setEmbeddingStatus] = useState<Record<string, 'pending' | 'processing' | 'success' | 'failed'>>({})
 
-  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
-    // 处理被拒绝的文件
-    if (rejectedFiles.length > 0) {
-      rejectedFiles.forEach((file) => {
-        const errors = file.errors.map((error: any) => {
-          switch (error.code) {
-            case 'file-too-large':
-              return `文件大小超过限制 (${formatFileSize(maxSize)})`
-            case 'file-invalid-type':
-              return '不支持的文件类型'
-            case 'too-many-files':
-              return `最多只能上传 ${maxFiles} 个文件`
-            default:
-              return error.message
-          }
-        }).join(', ')
-        
-        console.error(`文件 ${file.file.name} 上传失败: ${errors}`)
+  // 处理文件选择
+  const handleFileSelect = (selectedFiles: File[]) => {
+    if (disabled) return
+
+    const validFiles = selectedFiles.filter(file => {
+      // 检查文件大小
+      if (file.size > maxSize) {
+        console.warn(`文件 ${file.name} 大小超过 ${(maxSize / 1024 / 1024).toFixed(1)}MB`)
+        return false
+      }
+
+      // 检查文件数量
+      if (uploadedFiles.length >= maxFiles) {
+        console.warn(`最多只能上传 ${maxFiles} 个文件`)
+        return false
+      }
+
+      return true
+    })
+
+    if (validFiles.length === 0) return
+
+    const newFiles: UploadFile[] = validFiles.map((file, index) => ({
+      id: `file-${Date.now()}-${index}`,
+      originalFile: file, // 保存原始File对象
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      progress: 0,
+      status: 'pending' as const
+    }))
+
+    setUploadedFiles(prev => [...prev, ...newFiles])
+    
+    // 开始上传
+    if (onUpload) {
+      setIsUploading(true)
+      newFiles.forEach((uploadFile, index) => {
+        uploadToBackend(uploadFile, index * 100) // 错开上传时间
       })
     }
-
-    // 处理接受的文件
-    if (acceptedFiles.length > 0) {
-      const newFiles: UploadFile[] = acceptedFiles.map((file) => ({
-        id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        originalFile: file,  // 保存原始File对象
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        progress: 0,
-        status: 'uploading',
-      }))
-
-      setUploadedFiles(prev => [...prev, ...newFiles])
-      
-      // 真实上传到后端
-      newFiles.forEach((file, index) => {
-        uploadToBackend(file, index * 200)
-      })
-
-      onUpload?.(acceptedFiles)
-    }
-  }, [maxSize, maxFiles, onUpload])
+  }
 
   // 替换模拟上传为真实的后端上传
   const uploadToBackend = async (file: UploadFile, delay: number = 0) => {
@@ -108,35 +109,43 @@ export function FileUpload({
       if (delay > 0) {
         await new Promise(resolve => setTimeout(resolve, delay))
       }
+      
+      // 设置初始嵌入状态
+      setEmbeddingStatus(prev => ({
+        ...prev,
+        [file.id]: 'pending'
+      }))
 
-      const formData = new FormData()
-      // 使用保存的原始File对象
-      formData.append('files', file.originalFile)
-      formData.append('project_id', projectId || '') // 添加项目ID
-      if (stage) {
-        formData.append('stage', stage) // 只有当stage存在时才添加
-      } else {
-        formData.append('stage', '待分类') // 默认状态为待分类
-      }
-      formData.append('description', `上传文件: ${file.name}`)
+      // 更新文件状态为上传中
+      setUploadedFiles(prev => 
+        prev.map(f => 
+          f.id === file.id 
+            ? { ...f, status: 'uploading' }
+            : f
+        )
+      )
 
-      // 模拟上传进度
+      // 模拟进度更新
       const progressInterval = setInterval(() => {
         setUploadedFiles(prev => 
-          prev.map(f => {
-            if (f.id === file.id && f.status === 'uploading') {
-              const newProgress = Math.min((f.progress || 0) + Math.random() * 20, 90)
-              return { ...f, progress: newProgress }
-            }
-            return f
-          })
+          prev.map(f => 
+            f.id === file.id 
+              ? { ...f, progress: Math.min((f.progress || 0) + Math.random() * 30, 90) }
+              : f
+          )
         )
-      }, 300)
+      }, 200)
 
-      // 调用后端API
+      // 创建FormData
+      const formData = new FormData()
+      formData.append('files', file.originalFile)
+      formData.append('stage', stage || 'draft')
+      if (projectId !== 'default') formData.append('project_id', projectId)
+      formData.append('description', `上传文件: ${file.name}`)
+
       const response = await fetch('/api/v1/files/upload', {
         method: 'POST',
-        body: formData,
+        body: formData
       })
 
       clearInterval(progressInterval)
@@ -155,9 +164,23 @@ export function FileUpload({
 
         console.log('文件上传成功:', result)
         
-        // 触发文档嵌入处理
+        // 处理嵌入状态
         if (result && result.length > 0) {
-          await processDocumentEmbedding(result[0].id, result[0].file_path)
+          const uploadedFile = result[0]
+          setEmbeddingStatus(prev => ({
+            ...prev,
+            [file.id]: uploadedFile.is_processed ? 'success' : 'processing'
+          }))
+          
+          // 如果未处理，显示处理中状态
+          if (!uploadedFile.is_processed) {
+            setTimeout(() => {
+              setEmbeddingStatus(prev => ({
+                ...prev,
+                [file.id]: 'success'
+              }))
+            }, 3000) // 3秒后假设处理完成
+          }
         }
       } else {
         const error = await response.text()
@@ -175,6 +198,12 @@ export function FileUpload({
             : f
         )
       )
+      
+      // 设置嵌入状态为失败
+      setEmbeddingStatus(prev => ({
+        ...prev,
+        [file.id]: 'failed'
+      }))
     }
   }
 
@@ -207,7 +236,28 @@ export function FileUpload({
   }
 
   const { getRootProps, getInputProps, isDragActive: dropzoneActive } = useDropzone({
-    onDrop,
+    onDrop: (acceptedFiles, rejectedFiles) => {
+      handleFileSelect(acceptedFiles)
+      // 处理被拒绝的文件
+      if (rejectedFiles.length > 0) {
+        rejectedFiles.forEach((file) => {
+          const errors = file.errors.map((error: any) => {
+            switch (error.code) {
+              case 'file-too-large':
+                return `文件大小超过限制 (${formatFileSize(maxSize)})`
+              case 'file-invalid-type':
+                return '不支持的文件类型'
+              case 'too-many-files':
+                return `最多只能上传 ${maxFiles} 个文件`
+              default:
+                return error.message
+            }
+          }).join(', ')
+          
+          console.error(`文件 ${file.file.name} 上传失败: ${errors}`)
+        })
+      }
+    },
     accept,
     maxSize,
     maxFiles,
@@ -356,9 +406,38 @@ export function FileUpload({
                       )}
                       
                       {file.status === 'success' && (
-                        <span className="text-xs text-green-600 dark:text-green-400">
-                          上传成功
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs text-green-600 dark:text-green-400">
+                            上传成功
+                          </span>
+                          {/* 嵌入状态指示器 */}
+                          <div className="flex items-center space-x-1">
+                            {embeddingStatus[file.id] === 'pending' && (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
+                                <span className="text-xs text-yellow-600 dark:text-yellow-400">等待索引</span>
+                              </div>
+                            )}
+                            {embeddingStatus[file.id] === 'processing' && (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-blue-400 rounded-full animate-spin"></div>
+                                <span className="text-xs text-blue-600 dark:text-blue-400">智能索引中</span>
+                              </div>
+                            )}
+                            {embeddingStatus[file.id] === 'success' && (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                <span className="text-xs text-green-600 dark:text-green-400">索引完成</span>
+                              </div>
+                            )}
+                            {embeddingStatus[file.id] === 'failed' && (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-red-400 rounded-full"></div>
+                                <span className="text-xs text-red-600 dark:text-red-400">索引失败</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       )}
                       
                       {file.status === 'error' && (

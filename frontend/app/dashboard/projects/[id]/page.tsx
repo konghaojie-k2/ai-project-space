@@ -63,6 +63,13 @@ interface FileItem {
   url?: string
   thumbnail?: string
   source: 'user' | 'ai' | 'system' | 'api' // 文件来源：用户上传、AI生成、系统自动、API
+  isProcessed?: boolean // 是否已处理（索引到向量数据库）
+  // 添加从API映射的字段
+  originalName?: string
+  fileSize?: number
+  createdAt?: string
+  viewCount?: number
+  downloadCount?: number
 }
 
 // 移除所有模拟数据
@@ -308,7 +315,13 @@ const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
         stage: file.stage,
         tags: [], // 可以从file.tags获取
         url: `/api/v1/files/${file.id}/download`, // 下载链接
-        source: 'api' as const
+        source: 'api' as const,
+        isProcessed: file.is_processed, // 从API获取索引状态
+        originalName: file.original_name,
+        fileSize: file.file_size,
+        createdAt: file.created_at,
+        viewCount: file.view_count,
+        downloadCount: file.download_count
       }))
     } else {
       console.error('获取文件列表失败:', response.statusText)
@@ -415,6 +428,10 @@ export default function ProjectDetailPage() {
   // 项目统计状态
   const [projectStats, setProjectStats] = useState({ fileCount: 0, totalSize: 0 })
   const [isLoading, setIsLoading] = useState(true)
+  
+  // 文件索引状态
+  const [isIndexing, setIsIndexing] = useState(false)
+  const [indexStats, setIndexStats] = useState({ indexed: 0, total: 0 })
 
   // 客户端水合完成后再加载数据
   useEffect(() => {
@@ -781,6 +798,46 @@ export default function ProjectDetailPage() {
     window.location.href = `/dashboard/chat?project=${projectId}&name=${encodeURIComponent(project?.name || '')}`
   }
 
+  const handleBatchIndex = async () => {
+    if (!projectId || isIndexing) return
+    
+    setIsIndexing(true)
+    try {
+      const response = await fetch('/api/v1/files/batch-index', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          force_reindex: false
+        })
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        console.log('批量索引完成:', result)
+        
+        // 更新索引统计
+        setIndexStats({
+          indexed: result.indexed_count || 0,
+          total: result.total_processed || 0
+        })
+        
+        // 显示成功提示
+        alert(`文件索引完成！成功索引 ${result.indexed_count} 个文件`)
+      } else {
+        console.error('批量索引失败:', response.statusText)
+        alert('文件索引失败，请稍后重试')
+      }
+    } catch (error) {
+      console.error('批量索引错误:', error)
+      alert('文件索引失败，请稍后重试')
+    } finally {
+      setIsIndexing(false)
+    }
+  }
+
   // 如果项目已归档，显示无法访问的提示
   if (isHydrated && project?.status === 'archived') {
     return renderArchivedProject()
@@ -872,6 +929,16 @@ export default function ProjectDetailPage() {
             >
               <ChatBubbleLeftRightIcon className="h-5 w-5 mr-2" />
               AI助手
+            </Button>
+            {/* 文件索引状态和批量索引按钮 */}
+            <Button
+              variant="outline"
+              onClick={handleBatchIndex}
+              disabled={isIndexing}
+              className="flex items-center"
+            >
+              <CpuChipIcon className="h-5 w-5 mr-2" />
+              {isIndexing ? '索引中...' : '智能索引'}
             </Button>
             <Button onClick={() => setShowUploadModal(true)}>
               <CloudArrowUpIcon className="h-5 w-5 mr-2" />
@@ -1084,6 +1151,21 @@ export default function ProjectDetailPage() {
                       </span>
                     </div>
                   )}
+
+                  {/* 嵌入状态指示器 */}
+                  <div className="flex items-center space-x-1 mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {file.isProcessed ? (
+                      <div className="flex items-center space-x-1">
+                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                        <span>已索引</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center space-x-1">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                        <span>未索引</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -1122,25 +1204,16 @@ export default function ProjectDetailPage() {
                     <tr key={file.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="flex-shrink-0 mr-3">
+                          <div className="text-2xl mr-3">
                             {getFileIcon(file.type)}
                           </div>
-                          <div>
-                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                               {file.name}
-                            </div>
-                            {file.tags.length > 0 && (
-                              <div className="flex items-center space-x-1 mt-1">
-                                {file.tags.map((tag, index) => (
-                                  <span
-                                    key={index}
-                                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            </h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {formatFileSize(file.size)}
+                            </p>
                           </div>
                         </div>
                       </td>
