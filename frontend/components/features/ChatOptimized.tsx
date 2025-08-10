@@ -99,7 +99,7 @@ export const ChatOptimized: React.FC<ChatProps> = ({
   return (
     <div className={cn('flex flex-col h-full bg-white dark:bg-gray-900 overflow-hidden', className)}>
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 custom-scrollbar custom-scrollbar-always min-h-0">
+      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 custom-scrollbar min-h-0">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-4">

@@ -584,7 +584,7 @@ export default function ChatPage() {
         </div>
 
         {/* 会话列表 */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar custom-scrollbar-always">
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
           {isLoadingConversations ? (
             <div className="p-4 text-center text-gray-500">
               <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-2" />
@@ -791,7 +791,7 @@ export default function ChatPage() {
           </div>
 
           {/* 工作区内容 */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar custom-scrollbar-always">
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
             {/* 项目文件标签页 */}
             {workspaceActiveTab === 'files' && (
               <div className="p-4">
