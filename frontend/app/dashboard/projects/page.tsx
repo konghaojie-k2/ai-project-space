@@ -130,9 +130,15 @@ export default function ProjectsPage() {
     })
   }
 
-  const handleDeleteProject = (projectId: string) => {
+  const handleDeleteProject = async (projectId: string) => {
     if (confirm('确定要删除这个项目吗？此操作不可撤销。')) {
-      projectSync.deleteProject(projectId)
+      try {
+        await projectSync.deleteProject(projectId)
+        alert('项目删除成功！')
+      } catch (error) {
+        console.error('删除项目失败:', error)
+        alert('删除项目失败，请稍后重试')
+      }
     }
   }
 

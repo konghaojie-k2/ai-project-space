@@ -819,7 +819,7 @@ export default function ChatPage() {
                               {file.original_name}
                             </h4>
                             <p className="text-xs text-gray-500 mt-1">
-                              {file.stage} • {Math.round(file.size / 1024)}KB
+                              {file.stage}
                             </p>
                           </div>
                         </div>

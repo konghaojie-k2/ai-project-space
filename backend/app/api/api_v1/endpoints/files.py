@@ -353,6 +353,17 @@ async def delete_file(
             object_name=file_record.stored_name
         )
         
+        # 从向量数据库删除嵌入向量
+        try:
+            from app.services.ai_service import ai_service
+            vector_deleted = await ai_service.remove_document_from_vector_db(file_id)
+            if vector_deleted:
+                app_logger.info(f"🤖 文件向量已从向量数据库删除: {file_record.original_name}")
+            else:
+                app_logger.warning(f"🤖 文件向量删除失败: {file_record.original_name}")
+        except Exception as vector_error:
+            app_logger.error(f"🤖 删除文件向量时出错: {vector_error}")
+        
         # 从数据库删除记录
         file_service.delete_file(file_id)
         

@@ -24,5 +24,65 @@
       "upload_time": "2025-08-09T17:58:32.036504",
       "content_length": 34043
     }
+  },
+  "0f393242-0849-4452-9565-3c885f2882d8": {
+    "file_name": "test-file.txt",
+    "project_id": "1754784150353",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "0f393242-0849-4452-9565-3c885f2882d8",
+      "project_id": "1754784150353",
+      "file_name": "test-file.txt",
+      "file_type": "text/plain",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-08-10T08:03:04.244793",
+      "content_length": 121
+    }
+  },
+  "044a5aed-0a35-486c-8d91-d5bc29ed1951": {
+    "file_name": "数据分布类型指南报告 (1).pdf",
+    "project_id": "1754784582340",
+    "chunks_count": 43,
+    "metadata": {
+      "file_id": "044a5aed-0a35-486c-8d91-d5bc29ed1951",
+      "project_id": "1754784582340",
+      "file_name": "数据分布类型指南报告 (1).pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-08-10T08:10:01.797231",
+      "content_length": 34043
+    }
+  },
+  "82417b8d-d458-4eda-ad8a-50c92e8c5410": {
+    "file_name": "数据分布类型指南报告 (1).pdf",
+    "project_id": "1754784582340",
+    "chunks_count": 43,
+    "metadata": {
+      "file_id": "82417b8d-d458-4eda-ad8a-50c92e8c5410",
+      "project_id": "1754784582340",
+      "file_name": "数据分布类型指南报告 (1).pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-08-10T08:14:34.871876",
+      "content_length": 34043
+    }
+  },
+  "bb0d327a-fa49-4710-9714-ed4addc3b5ed": {
+    "file_name": "数据分布类型指南报告 (1).pdf",
+    "project_id": "1754785025702",
+    "chunks_count": 43,
+    "metadata": {
+      "file_id": "bb0d327a-fa49-4710-9714-ed4addc3b5ed",
+      "project_id": "1754785025702",
+      "file_name": "数据分布类型指南报告 (1).pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-08-10T08:17:20.740716",
+      "content_length": 34043
+    }
   }
 }

@@ -273,6 +273,59 @@ class AIService:
             logger.error(f"添加文档到向量数据库失败: {e}")
             return False
     
+    async def remove_document_from_vector_db(self, file_id: str) -> bool:
+        """从向量数据库中删除文档"""
+        try:
+            if not self.vector_store or not file_id:
+                logger.warning("向量存储未初始化或文件ID为空，跳过文档删除")
+                return False
+            
+            # 检查是否存在该文件的向量
+            if file_id not in self.documents_metadata:
+                logger.warning(f"文件 {file_id} 在向量数据库中不存在")
+                return True  # 不存在也算删除成功
+            
+            # FAISS不支持直接按元数据删除，需要重建索引
+            # 获取所有文档并过滤掉要删除的文件
+            try:
+                # 获取所有存储的文档
+                all_docs = []
+                if hasattr(self.vector_store, 'docstore') and hasattr(self.vector_store.docstore, '_dict'):
+                    for doc_id, doc in self.vector_store.docstore._dict.items():
+                        if doc.metadata.get("file_id") != file_id:
+                            all_docs.append(doc)
+                
+                # 如果没有剩余文档，创建一个空的向量存储
+                if not all_docs:
+                    self._create_new_vector_store()
+                    logger.info(f"✅ 删除文件后向量存储为空，已重新初始化")
+                else:
+                    # 重建向量存储（不包含被删除的文档）
+                    self.vector_store = FAISS.from_documents(all_docs, self.embeddings_model)
+                    logger.info(f"✅ 重建向量存储，排除文件: {file_id}")
+                
+                # 删除元数据
+                if file_id in self.documents_metadata:
+                    del self.documents_metadata[file_id]
+                
+                # 异步保存
+                await asyncio.get_event_loop().run_in_executor(None, self.save_vector_store)
+                
+                logger.info(f"✅ 文档已从向量数据库中删除: {file_id}")
+                return True
+                
+            except Exception as rebuild_error:
+                logger.error(f"重建向量存储失败: {rebuild_error}")
+                # 如果重建失败，至少清除元数据
+                if file_id in self.documents_metadata:
+                    del self.documents_metadata[file_id]
+                    await asyncio.get_event_loop().run_in_executor(None, self.save_vector_store)
+                return False
+            
+        except Exception as e:
+            logger.error(f"从向量数据库删除文档失败: {e}")
+            return False
+    
     async def search_similar_documents(
         self, 
         query: str, 

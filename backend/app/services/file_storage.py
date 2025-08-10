@@ -14,8 +14,12 @@ class LocalFileService:
     """本地文件存储服务"""
     
     def __init__(self):
-        # 统一使用项目根目录的uploads文件夹
-        self.storage_path = Path("uploads")
+        # 统一使用backend目录下的uploads文件夹
+        # 从当前文件位置向上找到backend目录
+        current_file = Path(__file__).resolve()
+        # file_storage.py在backend/app/services/下，所以向上3级到backend目录
+        backend_dir = current_file.parent.parent.parent
+        self.storage_path = backend_dir / "uploads"
         self._ensure_storage_exists()
         logger.info("本地文件存储服务初始化成功")
     
