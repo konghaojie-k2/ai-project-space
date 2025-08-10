@@ -139,6 +139,74 @@ class VolcengineClient:
         except Exception as e:
             logger.error(f"聊天完成失败: {e}")
             return f"抱歉，聊天失败: {str(e)}"
+
+    async def chat_completion_stream(self, messages: List[Dict[str, str]], **kwargs):
+        """流式聊天完成"""
+        try:
+            if self.api_key == "dummy_key":
+                # 模拟流式输出，用于演示
+                fallback_text = "抱歉，火山引擎API密钥未配置。这是一个模拟的流式回复示例，展示逐字显示效果。您可以配置真实的API密钥来获得完整功能。"
+                import asyncio
+                words = fallback_text.split()
+                for i, word in enumerate(words):
+                    if i == 0:
+                        yield word
+                    else:
+                        yield f" {word}"
+                    await asyncio.sleep(0.1)  # 控制流式速度
+                return
+            
+            # 真实的流式API调用
+            url = f"{self.base_url}chat/completions"
+            
+            data = {
+                "model": self.llm_model,
+                "messages": messages,
+                "max_tokens": kwargs.get("max_tokens", 1000),
+                "temperature": kwargs.get("temperature", 0.7),
+                "stream": True  # 启用流式输出
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            import httpx
+            import asyncio
+            
+            async with httpx.AsyncClient() as client:
+                async with client.stream("POST", url, json=data, headers=headers, timeout=30) as response:
+                    response.raise_for_status()
+                    
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]  # 去掉 "data: " 前缀
+                            
+                            if data_str == "[DONE]":
+                                break
+                                
+                            try:
+                                chunk_data = json.loads(data_str)
+                                if "choices" in chunk_data and chunk_data["choices"]:
+                                    delta = chunk_data["choices"][0].get("delta", {})
+                                    if "content" in delta:
+                                        yield delta["content"]
+                            except json.JSONDecodeError:
+                                continue
+                                
+        except Exception as e:
+            logger.error(f"流式聊天完成失败: {e}")
+            # 降级到模拟流式输出
+            fallback_text = f"API调用失败，以下是降级回复：针对您的问题，建议从以下几个方面考虑解决方案..."
+            import asyncio
+            words = fallback_text.split()
+            for i, word in enumerate(words):
+                if i == 0:
+                    yield word
+                else:
+                    yield f" {word}"
+                await asyncio.sleep(0.1)
     
     def test_connection(self) -> bool:
         """测试连接"""

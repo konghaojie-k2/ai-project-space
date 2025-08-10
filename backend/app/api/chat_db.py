@@ -193,8 +193,7 @@ async def get_messages(conversation_id: str, db: Session = Depends(get_db)):
                 id=msg.id,
                 role=msg.role,
                 content=msg.content,
-                timestamp=msg.timestamp,
-                conversation_id=msg.conversation_id
+                timestamp=msg.timestamp.isoformat()
             )
             for msg in messages
         ]

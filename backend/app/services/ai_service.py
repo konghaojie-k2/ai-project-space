@@ -475,21 +475,59 @@ class AIService:
                     "content": content
                 })
             
-            # 尝试使用真实的流式AI服务
+            # 使用真正的流式输出
             try:
-                # 这里可以接入真实的流式AI服务
-                # 目前使用模拟的流式响应
-                response_content = volcengine_client.chat_completion(api_messages)
-                
-                # 模拟流式输出 - 将完整回复按字符分割
-                import asyncio
-                words = response_content.split()
-                for i, word in enumerate(words):
-                    if i == 0:
-                        yield word
-                    else:
-                        yield f" {word}"
-                    await asyncio.sleep(0.1)  # 控制输出速度
+                # 先尝试使用流式API
+                async for chunk in volcengine_client.chat_completion_stream(api_messages):
+                    if chunk:
+                        yield chunk
+                        
+            except Exception as stream_error:
+                logger.warning(f"流式API调用失败，使用非流式降级: {stream_error}")
+                # 降级到非流式API，然后模拟流式输出
+                try:
+                    response_content = volcengine_client.chat_completion(api_messages)
+                    
+                    # 智能的流式输出：按句子和代码块分割
+                    import asyncio
+                    import re
+                    
+                    # 按合理的单位分割文本（句子、代码块等）
+                    chunks = []
+                    
+                    # 首先处理代码块
+                    parts = re.split(r'(```[\s\S]*?```)', response_content)
+                    for part in parts:
+                        if part.startswith('```'):
+                            # 代码块整体输出
+                            chunks.append(part)
+                        else:
+                            # 普通文本按句子分割
+                            sentences = re.split(r'([.!?。！？\n]+)', part)
+                            for i in range(0, len(sentences), 2):
+                                if i < len(sentences):
+                                    sentence = sentences[i]
+                                    if i + 1 < len(sentences):
+                                        sentence += sentences[i + 1]
+                                    if sentence.strip():
+                                        chunks.append(sentence)
+                    
+                    # 流式输出chunks
+                    for chunk in chunks:
+                        if chunk.strip():
+                            yield chunk
+                            await asyncio.sleep(0.1)  # 适当的延时
+                            
+                except Exception as fallback_error:
+                    logger.error(f"降级流式输出也失败: {fallback_error}")
+                    # 使用简单的逐词输出作为最后的降级
+                    words = response_content.split() if 'response_content' in locals() else ["抱歉，", "服务", "暂时", "不可用。"]
+                    for i, word in enumerate(words):
+                        if i == 0:
+                            yield word
+                        else:
+                            yield f" {word}"
+                        await asyncio.sleep(0.08)
                     
             except Exception as ai_error:
                 logger.warning(f"AI服务流式调用失败，使用降级方案: {ai_error}")
@@ -502,7 +540,7 @@ class AIService:
                     else:
                         last_message_content = getattr(last_msg, "content", "")
                         
-                fallback_response = self._generate_fallback_response(
+                fallback_response = self._generate_markdown_fallback_response(
                     last_message_content, 
                     project_context
                 )
@@ -593,6 +631,134 @@ class AIService:
             logger.error(f"构建增强上下文失败: {e}")
             return project_context or ""
     
+    def _generate_markdown_fallback_response(self, question: str, project_context: Optional[str] = None) -> str:
+        """生成Markdown格式的降级回复 - 用于测试流式渲染"""
+        
+        # 基于问题内容生成相应的Markdown回复
+        question_lower = question.lower()
+        
+        if any(keyword in question_lower for keyword in ['代码', 'code', '编程', 'programming', '函数', 'function']):
+            return f"""# 代码相关问题解答
+
+感谢您关于 **{question}** 的提问！
+
+## 解决方案
+
+根据您的问题，我为您提供以下建议：
+
+### 1. 代码示例
+
+```python
+def example_function():
+    \"\"\"
+    这是一个示例函数
+    \"\"\"
+    print("Hello, World!")
+    return True
+
+# 调用函数
+result = example_function()
+```
+
+### 2. 最佳实践
+
+- **代码规范**：遵循PEP 8标准
+- **注释说明**：为复杂逻辑添加注释
+- **错误处理**：使用适当的异常处理
+
+### 3. 相关资源
+
+- [Python官方文档](https://docs.python.org)
+- [代码规范指南](https://pep8.org)
+
+> 💡 **提示**: 实践是学习编程的最好方法！
+
+希望这个回答对您有帮助！如果您有更多问题，请随时提问。"""
+
+        elif any(keyword in question_lower for keyword in ['什么', 'what', '如何', 'how', '为什么', 'why']):
+            return f"""# 关于 "{question}" 的详细解答
+
+## 概述
+
+您询问的是一个很好的问题。让我为您详细解释：
+
+## 主要内容
+
+### 🔍 核心要点
+
+1. **第一点**: 这是重要的基础概念
+2. **第二点**: 这涉及到实际应用
+3. **第三点**: 这关系到最佳实践
+
+### 📝 详细说明
+
+对于您的问题，主要有以下几个方面需要考虑：
+
+- **技术层面**: 需要掌握相关的技术栈
+- **实践层面**: 需要进行实际操作练习  
+- **理论层面**: 需要理解underlying原理
+
+### 💡 示例代码
+
+```javascript
+// 示例代码
+function handleQuestion(question) {{
+    console.log(`处理问题: ${{question}}`);
+    
+    // 分析问题类型
+    const type = analyzeQuestionType(question);
+    
+    // 生成回答
+    return generateAnswer(type, question);
+}}
+```
+
+## 总结
+
+通过以上分析，我们可以得出结论：理解 + 实践 = 掌握。
+
+如果您还有其他问题，欢迎继续提问！"""
+
+        else:
+            return f"""# AI助手回复
+
+您好！感谢您的提问：**{question}**
+
+## 回答
+
+我很乐意为您解答这个问题。
+
+### 📋 分析
+
+基于您的问题，我认为可以从以下几个角度来考虑：
+
+1. **背景信息**: 首先需要了解相关背景
+2. **核心问题**: 明确问题的关键点  
+3. **解决方案**: 提供可行的解决方案
+
+### 🛠️ 建议
+
+```text
+这里是一些具体的建议和步骤：
+
+1. 仔细分析需求
+2. 制定实施计划
+3. 逐步执行方案
+4. 验证结果效果
+```
+
+### 📊 总结表格
+
+| 方面 | 重要性 | 说明 |
+|------|--------|------|
+| 理论基础 | ⭐⭐⭐⭐⭐ | 扎实的理论基础很重要 |
+| 实践经验 | ⭐⭐⭐⭐ | 通过实践加深理解 |
+| 持续学习 | ⭐⭐⭐ | 保持学习的态度 |
+
+> 🎯 **温馨提示**: 如果您需要更具体的帮助，请提供更多详细信息。
+
+希望我的回答对您有所帮助！"""
+
     def _generate_fallback_response(self, user_input: str, project_context: Optional[str] = None) -> str:
         """生成降级回复"""
         if not user_input:
@@ -695,7 +861,16 @@ class AIService:
 📚 **上下文理解**：
 - 会分析项目阶段和具体需求
 - 基于已有文档和资料提供建议
-- 考虑项目的技术栈和约束条件"""
+- 考虑项目的技术栈和约束条件
+
+📝 **回复格式要求**：
+- 请使用标准的Markdown格式回复
+- 使用合适的标题层级（# ## ###）来组织内容结构
+- 代码示例请使用代码块包围，并标明语言类型
+- 列表使用 - 或 1. 的格式
+- 重要内容使用 **粗体** 强调
+- 补充说明使用 *斜体*
+- 确保段落之间有适当的空行分隔"""
         
         if project_context:
             base_prompt += f"""
@@ -773,6 +948,33 @@ class AIService:
             "api_url": volcengine_client.base_url,
             "vector_db": "FAISS + 豆包Embedding" if self.vector_store else "未初始化"
         }
+
+    async def health_check(self) -> dict:
+        """健康检查"""
+        try:
+            # 简单测试向量数据库连接
+            if hasattr(self, 'vectorizer') and self.vectorizer:
+                status = "healthy"
+            else:
+                status = "degraded"
+                
+            return {
+                "status": status,
+                "message": "AI服务运行正常" if status == "healthy" else "AI服务部分功能降级",
+                "components": {
+                    "vectorizer": "healthy" if hasattr(self, 'vectorizer') and self.vectorizer else "unhealthy",
+                    "embeddings": "healthy" if hasattr(self, 'embeddings') and self.embeddings else "unhealthy"
+                }
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "message": f"AI服务异常: {str(e)}",
+                "components": {
+                    "vectorizer": "unknown",
+                    "embeddings": "unknown"
+                }
+            }
 
 # 创建全局AI服务实例
 ai_service = AIService() 

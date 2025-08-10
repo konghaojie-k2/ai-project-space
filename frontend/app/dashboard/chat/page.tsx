@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Chat, Message } from '@/components/features/Chat';
+import { ChatOptimized as Chat, Message } from '@/components/features/ChatOptimized';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
@@ -532,9 +532,9 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-full bg-gray-50">
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* 左侧边栏 - 会话列表 */}
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+      <div className="w-80 bg-white border-r border-gray-200 flex flex-col min-h-0">
         {/* 头部 */}
         <div className="p-4 border-b border-gray-200">
           <div className="flex items-center gap-3 mb-4">
@@ -584,7 +584,7 @@ export default function ChatPage() {
         </div>
 
         {/* 会话列表 */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto custom-scrollbar custom-scrollbar-always">
           {isLoadingConversations ? (
             <div className="p-4 text-center text-gray-500">
               <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-2" />
@@ -656,7 +656,7 @@ export default function ChatPage() {
       </div>
 
       {/* 主要内容区域 */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {currentConversation ? (
           <>
             {/* 聊天头部 */}
@@ -689,12 +689,13 @@ export default function ChatPage() {
             </div>
 
             {/* 聊天内容 */}
-            <div className="flex-1">
+            <div className="flex-1 min-h-0 overflow-hidden">
               <Chat
                 messages={messages}
                 onSendMessage={handleSendMessage}
                 isLoading={isLoading}
                 onSaveToDraft={handleSaveToDraft}
+                className="h-full"
               />
             </div>
           </>
@@ -734,7 +735,7 @@ export default function ChatPage() {
 
       {/* 右侧项目工作区 */}
       {showProjectWorkspace && selectedProject && (
-        <div className="w-80 bg-white border-l border-gray-200 flex flex-col">
+        <div className="w-80 bg-white border-l border-gray-200 flex flex-col min-h-0">
           {/* 工作区头部 */}
           <div className="p-4 border-b border-gray-200">
             <div className="flex items-center justify-between mb-3">
@@ -790,7 +791,7 @@ export default function ChatPage() {
           </div>
 
           {/* 工作区内容 */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto custom-scrollbar custom-scrollbar-always">
             {/* 项目文件标签页 */}
             {workspaceActiveTab === 'files' && (
               <div className="p-4">

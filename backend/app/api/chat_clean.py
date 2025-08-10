@@ -1,7 +1,6 @@
 """
-AI聊天API路由 - 数据库持久化版本
+AI聊天API路由 - 清理版本
 提供聊天会话管理、消息发送、文档搜索等功能
-使用SQLAlchemy进行数据持久化
 """
 
 import asyncio
@@ -12,15 +11,13 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
 from pydantic import BaseModel
 from loguru import logger
 
 from ..core.database import get_db
 from ..services.ai_service import ai_service
 from ..models.chat import (
-    Conversation as ConversationModel,
-    ChatMessage as ChatMessageModel,
+    ChatMessage, 
     ChatRequest, 
     ChatResponse, 
     MessageResponse, 
@@ -34,110 +31,61 @@ from ..models.chat import (
 
 router = APIRouter(tags=["chat"])
 
+# 模拟数据存储（实际项目中应该使用数据库）
+conversations_db = {}
+messages_db = {}
+
 @router.post("/conversations", response_model=ConversationResponse)
-async def create_conversation(request: ConversationCreate, db: Session = Depends(get_db)):
+async def create_conversation(request: ConversationCreate):
     """创建新会话"""
     try:
         conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
         
-        # 创建数据库记录
-        db_conversation = ConversationModel(
-            id=conversation_id,
-            title=request.title,
-            project_id=request.project_id,
-            project_name=None,  # 这里可以从项目数据库获取
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
+        conversation = {
+            "id": conversation_id,
+            "title": request.title,
+            "project_id": request.project_id,
+            "project_name": None,  # 这里可以从项目数据库获取
+            "last_message": None,
+            "message_count": 0,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        }
         
-        db.add(db_conversation)
-        db.commit()
-        db.refresh(db_conversation)
+        conversations_db[conversation_id] = conversation
+        messages_db[conversation_id] = []
         
         logger.info(f"创建新会话: {conversation_id}, 标题: {request.title}")
         
-        return ConversationResponse(
-            id=db_conversation.id,
-            title=db_conversation.title,
-            project_id=db_conversation.project_id,
-            project_name=db_conversation.project_name,
-            last_message=None,
-            message_count=0,
-            created_at=db_conversation.created_at.isoformat(),
-            updated_at=db_conversation.updated_at.isoformat()
-        )
+        return ConversationResponse(**conversation)
         
     except Exception as e:
-        db.rollback()
         logger.error(f"创建会话失败: {e}")
         raise HTTPException(status_code=500, detail="创建会话失败")
 
 @router.get("/conversations", response_model=List[ConversationResponse])
-async def get_conversations(db: Session = Depends(get_db)):
+async def get_conversations():
     """获取会话列表"""
     try:
-        # 从数据库获取会话，按更新时间排序
-        conversations = db.query(ConversationModel).order_by(desc(ConversationModel.updated_at)).all()
+        conversations = list(conversations_db.values())
+        # 按更新时间排序
+        conversations.sort(key=lambda x: x["updated_at"], reverse=True)
         
-        result = []
-        for conv in conversations:
-            # 获取最后一条消息
-            last_message = db.query(ChatMessageModel).filter(
-                ChatMessageModel.conversation_id == conv.id
-            ).order_by(desc(ChatMessageModel.timestamp)).first()
-            
-            # 获取消息数量
-            message_count = db.query(ChatMessageModel).filter(
-                ChatMessageModel.conversation_id == conv.id
-            ).count()
-            
-            result.append(ConversationResponse(
-                id=conv.id,
-                title=conv.title,
-                project_id=conv.project_id,
-                project_name=conv.project_name,
-                last_message=last_message.content[:100] + "..." if last_message else None,
-                message_count=message_count,
-                created_at=conv.created_at.isoformat(),
-                updated_at=conv.updated_at.isoformat()
-            ))
-        
-        return result
+        return [ConversationResponse(**conv) for conv in conversations]
         
     except Exception as e:
         logger.error(f"获取会话列表失败: {e}")
         raise HTTPException(status_code=500, detail="获取会话列表失败")
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
-async def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
+async def get_conversation(conversation_id: str):
     """获取会话详情"""
     try:
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
-        
-        if not conversation:
+        if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 获取最后一条消息和消息数量
-        last_message = db.query(ChatMessageModel).filter(
-            ChatMessageModel.conversation_id == conversation_id
-        ).order_by(desc(ChatMessageModel.timestamp)).first()
-        
-        message_count = db.query(ChatMessageModel).filter(
-            ChatMessageModel.conversation_id == conversation_id
-        ).count()
-        
-        return ConversationResponse(
-            id=conversation.id,
-            title=conversation.title,
-            project_id=conversation.project_id,
-            project_name=conversation.project_name,
-            last_message=last_message.content[:100] + "..." if last_message else None,
-            message_count=message_count,
-            created_at=conversation.created_at.isoformat(),
-            updated_at=conversation.updated_at.isoformat()
-        )
+        conversation = conversations_db[conversation_id]
+        return ConversationResponse(**conversation)
         
     except HTTPException:
         raise
@@ -146,19 +94,15 @@ async def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="获取会话详情失败")
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
+async def delete_conversation(conversation_id: str):
     """删除会话"""
     try:
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
-        
-        if not conversation:
+        if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 删除会话（消息会通过cascade自动删除）
-        db.delete(conversation)
-        db.commit()
+        del conversations_db[conversation_id]
+        if conversation_id in messages_db:
+            del messages_db[conversation_id]
         
         logger.info(f"删除会话: {conversation_id}")
         
@@ -167,34 +111,24 @@ async def delete_conversation(conversation_id: str, db: Session = Depends(get_db
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"删除会话失败: {e}")
         raise HTTPException(status_code=500, detail="删除会话失败")
 
 @router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
-async def get_messages(conversation_id: str, db: Session = Depends(get_db)):
+async def get_messages(conversation_id: str):
     """获取会话消息"""
     try:
-        # 验证会话存在
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
-        
-        if not conversation:
+        if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 获取消息，按时间顺序排序
-        messages = db.query(ChatMessageModel).filter(
-            ChatMessageModel.conversation_id == conversation_id
-        ).order_by(ChatMessageModel.timestamp).all()
+        messages = messages_db.get(conversation_id, [])
         
         return [
             MessageResponse(
-                id=msg.id,
-                role=msg.role,
-                content=msg.content,
-                timestamp=msg.timestamp,
-                conversation_id=msg.conversation_id
+                id=msg["id"],
+                role=msg["role"],
+                content=msg["content"],
+                timestamp=msg["timestamp"]
             )
             for msg in messages
         ]
@@ -206,28 +140,22 @@ async def get_messages(conversation_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="获取消息失败")
 
 @router.post("/conversations/{conversation_id}/messages", response_model=ChatResponse)
-async def send_message(conversation_id: str, request: ChatRequest, db: Session = Depends(get_db)):
+async def send_message(conversation_id: str, request: ChatRequest):
     """发送消息（非流式）"""
     try:
-        # 验证会话存在
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
-        
-        if not conversation:
+        if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 保存用户消息到数据库
-        user_message = ChatMessageModel(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            conversation_id=conversation_id,
-            role="user",
-            content=request.messages[-1]["content"],
-            timestamp=datetime.utcnow()
-        )
+        # 保存用户消息
+        user_message = {
+            "id": f"msg_{uuid.uuid4().hex[:8]}",
+            "role": "user",
+            "content": request.messages[-1]["content"],
+            "timestamp": datetime.now(),
+            "conversation_id": conversation_id
+        }
         
-        db.add(user_message)
-        db.commit()
+        messages_db[conversation_id].append(user_message)
         
         # 调用AI服务
         ai_response = await ai_service.chat_completion(
@@ -236,21 +164,21 @@ async def send_message(conversation_id: str, request: ChatRequest, db: Session =
             model_name=request.model or "gpt-3.5-turbo"
         )
         
-        # 保存AI回复到数据库
-        ai_message = ChatMessageModel(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            conversation_id=conversation_id,
-            role="assistant",
-            content=ai_response.content,
-            timestamp=datetime.utcnow()
-        )
+        # 保存AI回复
+        ai_message = {
+            "id": f"msg_{uuid.uuid4().hex[:8]}",
+            "role": "assistant",
+            "content": ai_response.content,
+            "timestamp": datetime.now(),
+            "conversation_id": conversation_id
+        }
         
-        db.add(ai_message)
+        messages_db[conversation_id].append(ai_message)
         
         # 更新会话信息
-        conversation.updated_at = datetime.utcnow()
-        
-        db.commit()
+        conversations_db[conversation_id]["last_message"] = ai_response.content[:100] + "..."
+        conversations_db[conversation_id]["message_count"] = len(messages_db[conversation_id])
+        conversations_db[conversation_id]["updated_at"] = datetime.now()
         
         logger.info(f"消息发送成功，会话: {conversation_id}")
         
@@ -259,33 +187,26 @@ async def send_message(conversation_id: str, request: ChatRequest, db: Session =
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"发送消息失败: {e}")
         raise HTTPException(status_code=500, detail="发送消息失败")
 
 @router.post("/conversations/{conversation_id}/messages/stream")
-async def send_message_stream(conversation_id: str, request: ChatRequest, db: Session = Depends(get_db)):
-    """发送消息（流式响应）- 数据库持久化版本"""
+async def send_message_stream(conversation_id: str, request: ChatRequest):
+    """发送消息（流式响应）- 参考DeerFlow优化实现"""
     try:
-        # 验证会话存在
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
-        
-        if not conversation:
+        if conversation_id not in conversations_db:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 保存用户消息到数据库
-        user_message = ChatMessageModel(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            conversation_id=conversation_id,
-            role="user",
-            content=request.messages[-1]["content"],
-            timestamp=datetime.utcnow()
-        )
+        # 保存用户消息
+        user_message = {
+            "id": f"msg_{uuid.uuid4().hex[:8]}",
+            "role": "user",
+            "content": request.messages[-1]["content"],
+            "timestamp": datetime.now(),
+            "conversation_id": conversation_id
+        }
         
-        db.add(user_message)
-        db.commit()
+        messages_db[conversation_id].append(user_message)
         
         # 生成AI消息ID
         ai_message_id = f"msg_{uuid.uuid4().hex[:8]}"
@@ -294,11 +215,11 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
         async def generate_stream():
             nonlocal ai_content
             try:
-                # 发送开始事件
+                # 发送开始事件 - 添加更多元数据
                 start_event = {
                     "message_id": ai_message_id, 
                     "type": "start",
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now().isoformat(),
                     "conversation_id": conversation_id
                 }
                 yield f"data: {json.dumps(start_event, ensure_ascii=False)}\n\n"
@@ -318,6 +239,7 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
                     ai_content += chunk
                     
                     # 检查是否是完整的词汇或句子边界
+                    # 这样可以避免在markdown语法中间断开
                     should_send = (
                         chunk.endswith(' ') or 
                         chunk.endswith('\n') or 
@@ -338,7 +260,7 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
                             "role": "assistant", 
                             "content": buffer,
                             "type": "content",
-                            "timestamp": datetime.utcnow().isoformat()
+                            "timestamp": datetime.now().isoformat()
                         }
                         yield f"data: {json.dumps(content_event, ensure_ascii=False)}\n\n"
                         buffer = ""  # 清空缓冲区
@@ -350,33 +272,33 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
                         "role": "assistant", 
                         "content": buffer,
                         "type": "content",
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": datetime.now().isoformat()
                     }
                     yield f"data: {json.dumps(content_event, ensure_ascii=False)}\n\n"
                 
-                # 保存完整的AI回复到数据库
-                ai_message = ChatMessageModel(
-                    id=ai_message_id,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=ai_content,
-                    timestamp=datetime.utcnow()
-                )
+                # 保存完整的AI回复
+                ai_message = {
+                    "id": ai_message_id,
+                    "role": "assistant",
+                    "content": ai_content,
+                    "timestamp": datetime.now(),
+                    "conversation_id": conversation_id
+                }
                 
-                db.add(ai_message)
+                messages_db[conversation_id].append(ai_message)
                 
                 # 更新会话信息
-                conversation.updated_at = datetime.utcnow()
+                conversations_db[conversation_id]["last_message"] = ai_content[:100] + "..."
+                conversations_db[conversation_id]["message_count"] = len(messages_db[conversation_id])
+                conversations_db[conversation_id]["updated_at"] = datetime.now()
                 
-                db.commit()
-                
-                # 发送完成信号
+                # 发送完成信号 - 包含完整内容和元数据
                 end_event = {
                     "message_id": ai_message_id,
                     "role": "assistant", 
                     "content": ai_content,
                     "type": "end",
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now().isoformat(),
                     "total_tokens": len(ai_content.split())  # 简单的token计数
                 }
                 yield f"data: {json.dumps(end_event, ensure_ascii=False)}\n\n"
@@ -392,7 +314,7 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
                     "role": "assistant", 
                     "content": f"抱歉，AI服务暂时不可用。您的问题：{request.messages[-1]['content']}",
                     "type": "error",
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now().isoformat()
                 }
                 yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
         
@@ -411,7 +333,6 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"发送流式消息失败: {e}")
         raise HTTPException(status_code=500, detail="发送流式消息失败")
 
@@ -465,10 +386,9 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now().isoformat(),
             "services": {
-                "ai_service": ai_status,
-                "database": "connected"
+                "ai_service": ai_status
             }
         }
         
@@ -476,6 +396,6 @@ async def health_check():
         logger.error(f"健康检查失败: {e}")
         return {
             "status": "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now().isoformat(),
             "error": str(e)
         }

@@ -3,13 +3,21 @@ from sqlalchemy.orm import Session
 
 from app.core.database import engine, SessionLocal
 from app.models.file import FileRecord, FileVersion, FileShare, FileComment
+from app.models.chat import Conversation, ChatMessage
 
 
 def init_db() -> None:
     """初始化数据库"""
     try:
+        # 导入所有模型以确保表被创建
+        from app.models.base import Base
+        from app.models.file import FileRecord, FileVersion, FileShare, FileComment
+        from app.models.chat import Conversation, ChatMessage
+        from app.models.project import Project
+        from app.models.qa import QASession, Note
+        from app.models.user import User
+        
         # 创建所有表
-        from app.models.file import Base
         Base.metadata.create_all(bind=engine)
         
         logger.info("数据库表创建成功")
