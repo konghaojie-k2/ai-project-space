@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import ToastProvider from '@/components/providers/ToastProvider'
+import { UserProvider } from '@/lib/contexts/UserContext'
 
 // 配置Inter字体
 const inter = Inter({ subsets: ['latin'] })
@@ -39,12 +40,14 @@ export default function RootLayout({
         </div>
         
         {/* 主要内容 */}
-        <main className="min-h-screen bg-secondary-50">
-          {children}
-        </main>
-        
-        {/* Toast通知提供者 */}
-        <ToastProvider />
+        <UserProvider>
+          <main className="min-h-screen bg-secondary-50">
+            {children}
+          </main>
+          
+          {/* Toast通知提供者 */}
+          <ToastProvider />
+        </UserProvider>
       </body>
     </html>
   )

@@ -23,6 +23,7 @@ export interface Message {
   timestamp: Date;
   status?: 'sending' | 'sent' | 'error';
   isTyping?: boolean;
+  model?: string; // AI模型名称
 }
 
 // 聊天组件属性
@@ -30,7 +31,7 @@ interface ChatProps {
   messages: Message[];
   onSendMessage: (content: string) => void;
   onStopGeneration?: () => void;
-  onSaveToDraft?: (content: string) => void;
+  onSaveToDraft?: (message: Message) => void;
   isLoading?: boolean;
   className?: string;
 }
@@ -193,7 +194,7 @@ export const ChatOptimized: React.FC<ChatProps> = ({
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => onSaveToDraft(message.content)}
+                          onClick={() => onSaveToDraft(message)}
                           className="h-6 px-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                         >
                           <BookmarkIcon className="w-3 h-3 mr-1" />

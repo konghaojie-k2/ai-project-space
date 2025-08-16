@@ -28,11 +28,25 @@ import {
   EyeIcon,
   DocumentDuplicateIcon,
   ArchiveBoxIcon,
-  SparklesIcon
+  SparklesIcon,
+  CodeBracketIcon,
+  DocumentIcon
 } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
 import { chatAPI, Conversation, ConversationCreateRequest, ChatRequest } from '@/lib/api/chat';
 import { projectSync } from '@/lib/services/project-sync';
+import { useUser } from '@/lib/contexts/UserContext';
+
+// 项目阶段选项
+const PROJECT_STAGES = [
+  '待分类',
+  '售前阶段',
+  '业务调研',
+  '数据理解',
+  '数据探索',
+  '工程开发',
+  '实施部署'
+];
 
 interface Project {
   id: string;
@@ -79,6 +93,7 @@ interface SavedItem {
 }
 
 export default function ChatPage() {
+  const { user } = useUser();
   const searchParams = useSearchParams();
   const projectId = searchParams.get('project');
   const projectName = searchParams.get('name');
@@ -105,6 +120,12 @@ export default function ChatPage() {
   const [drafts, setDrafts] = useState<any[]>([]);
   const [savedItems, setSavedItems] = useState<any[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  
+  // 保存模态框状态
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [savingDraft, setSavingDraft] = useState<DraftItem | null>(null);
+  const [saveFileName, setSaveFileName] = useState('');
+  const [saveFileStage, setSaveFileStage] = useState('待分类');
   
   // 下拉菜单定位ref
   const projectSelectorRef = useRef<HTMLDivElement>(null);
@@ -176,31 +197,31 @@ export default function ChatPage() {
   }, [projectId, projectName, conversations, isLoadingConversations, selectedProject]);
 
   // 加载项目文件
+  const loadProjectFiles = async () => {
+    if (!selectedProject?.id) {
+      setProjectFiles([]);
+      return;
+    }
+
+    setIsLoadingFiles(true);
+    try {
+      const response = await fetch(`/api/v1/files?project_id=${selectedProject.id}`);
+      if (response.ok) {
+        const files = await response.json();
+        setProjectFiles(files);
+      } else {
+        console.error('加载项目文件失败:', response.statusText);
+        setProjectFiles([]);
+      }
+    } catch (error) {
+      console.error('加载项目文件出错:', error);
+      setProjectFiles([]);
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
   useEffect(() => {
-    const loadProjectFiles = async () => {
-      if (!selectedProject?.id) {
-        setProjectFiles([]);
-        return;
-      }
-
-      setIsLoadingFiles(true);
-      try {
-        const response = await fetch(`/api/v1/files?project_id=${selectedProject.id}`);
-        if (response.ok) {
-          const files = await response.json();
-          setProjectFiles(files);
-        } else {
-          console.error('加载项目文件失败:', response.statusText);
-          setProjectFiles([]);
-        }
-      } catch (error) {
-        console.error('加载项目文件出错:', error);
-        setProjectFiles([]);
-      } finally {
-        setIsLoadingFiles(false);
-      }
-    };
-
     loadProjectFiles();
   }, [selectedProject?.id]);
 
@@ -212,7 +233,7 @@ export default function ChatPage() {
       id: `draft_${Date.now()}`,
       title: message.content.slice(0, 50) + '...',
       content: message.content,
-      aiModel: 'AI Assistant', // 可以从消息中获取具体模型
+      aiModel: message.model || 'AI助手', // 从消息中获取具体模型，默认显示通用名称
       createdAt: new Date().toISOString(),
       messageId: message.id,
       conversationId: currentConversation?.id || '',
@@ -223,15 +244,109 @@ export default function ChatPage() {
     // 这里可以添加toast提示
   };
 
+  // 根据文件类型获取对应图标
+  const getFileIcon = (fileName: string) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    switch (extension) {
+      case 'md':
+      case 'markdown':
+        return <CodeBracketIcon className="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5" />;
+      case 'pdf':
+        return <DocumentIcon className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />;
+      case 'doc':
+      case 'docx':
+        return <DocumentTextIcon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />;
+      case 'txt':
+        return <DocumentTextIcon className="w-5 h-5 text-gray-600 flex-shrink-0 mt-0.5" />;
+      default:
+        return <DocumentTextIcon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />;
+    }
+  };
+
+  // 提取Markdown标题作为文件名
+  const extractTitleFromMarkdown = (content: string): string => {
+    // 匹配一级标题 (# 标题)
+    const h1Match = content.match(/^#\s+(.+?)$/m);
+    if (h1Match) {
+      return h1Match[1]
+        .replace(/[^a-zA-Z0-9\u4e00-\u9fa5\s]/g, '') // 移除特殊字符
+        .trim()
+        .replace(/\s+/g, '_'); // 空格替换为下划线
+    }
+    
+    // 如果没有一级标题，尝试匹配二级标题
+    const h2Match = content.match(/^##\s+(.+?)$/m);
+    if (h2Match) {
+      return h2Match[1]
+        .replace(/[^a-zA-Z0-9\u4e00-\u9fa5\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '_');
+    }
+    
+    // 如果没有二级标题，尝试匹配三级标题
+    const h3Match = content.match(/^###\s+(.+?)$/m);
+    if (h3Match) {
+      return h3Match[1]
+        .replace(/[^a-zA-Z0-9\u4e00-\u9fa5\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '_');
+    }
+    
+    // 如果都没有，取内容前30字符
+    return content.slice(0, 30)
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fa5\s]/g, '')
+      .trim()
+      .replace(/\s+/g, '_') || 'AI回答';
+  };
+
+  // 打开保存模态框
+  const handleOpenSaveModal = (draft: DraftItem) => {
+    setSavingDraft(draft);
+    // 智能提取文件名
+    const defaultName = extractTitleFromMarkdown(draft.content);
+    setSaveFileName(defaultName);
+    setSaveFileStage('待分类');
+    setShowSaveModal(true);
+  };
+
+  // 确认保存到项目
+  const handleConfirmSave = async () => {
+    if (!savingDraft || !saveFileName.trim()) return;
+    
+    try {
+      await handleSaveToProject(savingDraft, saveFileName.trim(), 'md', saveFileStage);
+      setShowSaveModal(false);
+      setSavingDraft(null);
+      setSaveFileName('');
+      setSaveFileStage('待分类');
+      // 从暂存中移除已保存的项目
+      setDrafts(prev => prev.filter(d => d.id !== savingDraft.id));
+      // 刷新文件列表
+      if (selectedProject) {
+        loadProjectFiles();
+      }
+    } catch (error) {
+      console.error('保存失败:', error);
+    }
+  };
+
   // 保存到项目文件
   const handleSaveToProject = async (draftItem: DraftItem, fileName: string, fileType: string, stage: string) => {
     try {
       // 创建文件内容
-      const fileContent = new Blob([draftItem.content], { type: 'text/plain' });
+      const fileContent = new Blob([draftItem.content], { type: 'text/markdown' });
       const formData = new FormData();
-      formData.append('file', fileContent, `${fileName}.${fileType}`);
+      formData.append('files', fileContent, `${fileName}.${fileType}`);
       formData.append('project_id', selectedProject?.id || '');
       formData.append('stage', stage);
+      // 组合AI模型名和用户名 - 修复旧暂存数据的模型名称
+      const actualModel = draftItem.aiModel === 'AI助手' || draftItem.aiModel === 'Claude-3.5' 
+        ? 'deepseek-v3-250324' 
+        : draftItem.aiModel;
+      const uploaderInfo = `${actualModel} (${user?.name || '管理员'})`;
+      formData.append('uploaded_by', uploaderInfo);
+      formData.append('description', `${actualModel}生成的回答内容，由${user?.name || '管理员'}保存`);
 
       const response = await fetch('/api/v1/files/upload', {
         method: 'POST',
@@ -370,11 +485,11 @@ export default function ChatPage() {
               : msg
           ));
         },
-        onEnd: (messageId) => {
-          // 标记消息完成
+        onEnd: (messageId, endData) => {
+          // 标记消息完成，并设置模型信息
           setMessages(prev => prev.map(msg => 
             msg.id === aiMessageId 
-              ? { ...msg, status: 'sent' }
+              ? { ...msg, status: 'sent', model: endData?.model || 'AI助手' }
               : msg
           ));
           setIsLoading(false);
@@ -387,7 +502,7 @@ export default function ChatPage() {
           const fallbackContent = generateSmartResponse(content, currentConversation.project_name);
           setMessages(prev => prev.map(msg => 
             msg.id === aiMessageId 
-              ? { ...msg, content: fallbackContent, status: 'sent' }
+              ? { ...msg, content: fallbackContent, status: 'sent', model: '降级响应' }
               : msg
           ));
           setIsLoading(false);
@@ -400,7 +515,7 @@ export default function ChatPage() {
       const fallbackContent = generateSmartResponse(content, currentConversation.project_name);
       setMessages(prev => prev.map(msg => 
         msg.id === aiMessageId 
-          ? { ...msg, content: fallbackContent, status: 'sent' }
+          ? { ...msg, content: fallbackContent, status: 'sent', model: '降级响应' }
           : msg
       ));
       setIsLoading(false);
@@ -814,7 +929,7 @@ export default function ChatPage() {
                         className="p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors group"
                       >
                         <div className="flex items-start gap-3">
-                          <DocumentTextIcon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                          {getFileIcon(file.original_name)}
                           <div className="flex-1 min-w-0">
                             <h4 className="text-sm font-medium text-gray-900 truncate">
                               {file.original_name}
@@ -871,10 +986,14 @@ export default function ChatPage() {
                         </p>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => {
-                              alert('保存到项目功能开发中...');
-                            }}
-                            className="flex-1 px-3 py-1.5 text-xs bg-green-50 text-green-700 rounded-md hover:bg-green-100 transition-colors"
+                            onClick={() => handleOpenSaveModal(draft)}
+                            disabled={!selectedProject}
+                            className={cn(
+                              "flex-1 px-3 py-1.5 text-xs rounded-md transition-colors",
+                              selectedProject
+                                ? "bg-green-50 text-green-700 hover:bg-green-100"
+                                : "bg-gray-50 text-gray-400 cursor-not-allowed"
+                            )}
                           >
                             保存到项目
                           </button>
@@ -1090,6 +1209,79 @@ export default function ChatPage() {
           </div>
         </div>
       </Modal>
+
+      {/* 保存为文件模态框 */}
+      {showSaveModal && savingDraft && (
+        <Modal
+          isOpen={showSaveModal}
+          onClose={() => setShowSaveModal(false)}
+          title="保存为MD文件"
+          size="md"
+        >
+          <div className="space-y-4">
+            {/* 文件预览 */}
+            <div className="bg-gray-50 rounded-lg p-3">
+              <h4 className="text-sm font-medium text-gray-900 mb-2">
+                内容预览
+              </h4>
+              <p className="text-sm text-gray-600 max-h-32 overflow-y-auto">
+                {savingDraft.content.slice(0, 200)}
+                {savingDraft.content.length > 200 && '...'}
+              </p>
+            </div>
+
+            {/* 文件名输入 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                文件名
+              </label>
+              <Input
+                value={saveFileName}
+                onChange={(e) => setSaveFileName(e.target.value)}
+                placeholder="请输入文件名"
+                className="w-full"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                文件将保存为：{saveFileName}.md
+              </p>
+            </div>
+
+            {/* 项目阶段选择 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                项目阶段
+              </label>
+              <select
+                value={saveFileStage}
+                onChange={(e) => setSaveFileStage(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {PROJECT_STAGES.map(stage => (
+                  <option key={stage} value={stage}>{stage}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 按钮组 */}
+            <div className="flex gap-3 pt-4">
+              <Button
+                onClick={() => setShowSaveModal(false)}
+                variant="outline"
+                className="flex-1"
+              >
+                取消
+              </Button>
+              <Button
+                onClick={handleConfirmSave}
+                disabled={!saveFileName.trim()}
+                className="flex-1"
+              >
+                保存文件
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 } 

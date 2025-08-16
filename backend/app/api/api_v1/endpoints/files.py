@@ -33,6 +33,7 @@ async def upload_files(
     project_id: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    uploaded_by: Optional[str] = Form("管理员"),
     file_service: FileService = Depends(get_file_service),
     storage_service: LocalFileService = Depends(get_storage_service)
 ):
@@ -97,7 +98,7 @@ async def upload_files(
                     stage=stage,
                     tags=tags_list,
                     description=description,
-                    uploaded_by="current_user"  # TODO: 从认证中获取
+                    uploaded_by=uploaded_by
                 )
                 app_logger.info(f"🔥 FileCreate对象创建成功: {file_create}")
                 
@@ -349,9 +350,14 @@ async def delete_file(
             raise HTTPException(status_code=404, detail="文件不存在")
         
         # 从本地存储删除文件
-        await storage_service.delete_file(
+        storage_deleted = await storage_service.delete_file(
             object_name=file_record.stored_name
         )
+        
+        if not storage_deleted:
+            app_logger.warning(f"⚠️ 物理文件删除失败，但继续删除数据库记录: {file_record.original_name}")
+        else:
+            app_logger.info(f"✅ 物理文件删除成功: {file_record.original_name}")
         
         # 从向量数据库删除嵌入向量
         try:

@@ -6,6 +6,7 @@ import { CloudArrowUpIcon, DocumentIcon, XMarkIcon } from '@heroicons/react/24/o
 import { CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid'
 import Button from '@/components/ui/Button'
 import { formatFileSize } from '@/lib/utils'
+import { useUser } from '@/lib/contexts/UserContext'
 
 interface FileUploadProps {
   onUpload?: (files: File[]) => void
@@ -54,6 +55,7 @@ export function FileUpload({
   projectId = 'default', // 默认项目ID
   stage, // 移除默认值，让stage可以为空
 }: FileUploadProps) {
+  const { user } = useUser()
   const [uploadedFiles, setUploadedFiles] = useState<UploadFile[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -142,6 +144,8 @@ export function FileUpload({
       formData.append('stage', stage || 'draft')
       if (projectId !== 'default') formData.append('project_id', projectId)
       formData.append('description', `上传文件: ${file.name}`)
+      // 添加实际用户信息
+      formData.append('uploaded_by', user?.name || '管理员')
 
       const response = await fetch('/api/v1/files/upload', {
         method: 'POST',

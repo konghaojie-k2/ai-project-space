@@ -110,14 +110,29 @@ class LocalFileService:
             bool: 删除是否成功
         """
         try:
+            # 确保object_name是完整的路径
             file_path = self.storage_path / object_name
+            
+            # 记录详细的删除信息用于调试
+            logger.info(f"尝试删除文件: {file_path.absolute()}")
+            logger.info(f"文件是否存在: {file_path.exists()}")
+            
             if file_path.exists():
                 file_path.unlink()
-                logger.info(f"文件删除成功: {file_path}")
-                return True
-            return False
+                logger.info(f"✅ 物理文件删除成功: {file_path.absolute()}")
+                
+                # 双重验证文件是否真的被删除
+                if not file_path.exists():
+                    logger.info(f"✅ 确认文件已被物理删除: {object_name}")
+                    return True
+                else:
+                    logger.error(f"❌ 文件删除后仍然存在: {file_path.absolute()}")
+                    return False
+            else:
+                logger.warning(f"⚠️ 文件不存在，无需删除: {file_path.absolute()}")
+                return True  # 文件不存在也算删除成功
         except Exception as e:
-            logger.error(f"文件删除失败: {e}")
+            logger.error(f"❌ 文件删除失败: {object_name}, 错误: {e}")
             return False
 
     def get_file_url(

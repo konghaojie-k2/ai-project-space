@@ -54,6 +54,25 @@ const fetchGlobalFileStats = async (): Promise<{ totalFiles: number; totalSize: 
   return { totalFiles: 0, totalSize: 0 }
 }
 
+// 获取AI对话统计
+const fetchChatStats = async (): Promise<{ aiChats: number }> => {
+  try {
+    const response = await fetch('/api/v1/chat/stats')
+    if (response.ok) {
+      const stats = await response.json()
+      console.log('AI对话统计数据:', stats)
+      return {
+        aiChats: stats.total_conversations || 0
+      }
+    } else {
+      console.error('获取AI对话统计失败，HTTP状态:', response.status)
+    }
+  } catch (error) {
+    console.error('获取AI对话统计失败:', error)
+  }
+  return { aiChats: 0 }
+}
+
 export default function DashboardPage() {
   const [isLoaded, setIsLoaded] = useState(false)
   const [stats, setStats] = useState<DashboardStats>({
@@ -72,12 +91,15 @@ export default function DashboardPage() {
       // 获取真实文件统计
       const fileStats = await fetchGlobalFileStats()
       
+      // 获取真实AI对话统计
+      const chatStats = await fetchChatStats()
+      
       setStats({
         activeProjects: globalStats.activeProjects,
         totalFiles: fileStats.totalFiles,
         totalSize: fileStats.totalSize,
         totalMembers: globalStats.totalMembers,
-        aiChats: 0 // TODO: 后续从API获取AI对话统计
+        aiChats: chatStats.aiChats
       })
       
       setIsLoaded(true)

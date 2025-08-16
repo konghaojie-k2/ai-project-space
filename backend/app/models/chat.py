@@ -75,6 +75,7 @@ class MessageResponse(BaseModel):
     role: str
     timestamp: datetime
     conversation_id: str
+    model: Optional[str] = None  # AI模型名称
 
     class Config:
         from_attributes = True

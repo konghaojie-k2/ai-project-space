@@ -27,7 +27,8 @@ import {
   UserIcon,
   CpuChipIcon,
   ChatBubbleLeftRightIcon,
-  HomeIcon
+  HomeIcon,
+  CodeBracketIcon
 } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import Button from '@/components/ui/Button'
@@ -299,6 +300,8 @@ const getStoredProjects = (): Record<string, Project> => {
   return {} // 移除模拟数据，返回空对象
 }
 
+
+
 // 从后端API获取文件列表
 const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
   try {
@@ -311,11 +314,20 @@ const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
         type: file.file_type,
         size: file.file_size,
         uploadedAt: file.created_at,
-        uploadedBy: '当前用户', // 可以从用户信息获取
+        uploadedBy: file.uploaded_by === 'current_user' ? '管理员' : 
+                    file.uploaded_by === '管理员' ? '管理员' : 
+                    (file.uploaded_by || '管理员'), // 映射用户信息
         stage: file.stage,
         tags: [], // 可以从file.tags获取
         url: `/api/v1/files/${file.id}/download`, // 下载链接
-        source: 'api' as const,
+        // 根据uploaded_by判断文件来源
+        source: (file.uploaded_by === 'AI助手' || 
+                file.uploaded_by?.includes('GPT') || 
+                file.uploaded_by?.includes('Claude') || 
+                file.uploaded_by?.includes('Gemini') ||
+                file.uploaded_by?.includes('AI') ||
+                // 新格式：模型名 (用户名)
+                file.uploaded_by?.match(/^(GPT|Claude|Gemini|LLaMA|ChatGPT|Anthropic|OpenAI|AI)\S*\s*\(/)) ? 'ai' as const : 'user' as const,
         isProcessed: file.is_processed, // 从API获取索引状态
         originalName: file.original_name,
         fileSize: file.file_size,
@@ -402,12 +414,10 @@ export default function ProjectDetailPage() {
   const [storedProjects, setStoredProjects] = useState<Record<string, Project>>(getStoredProjects())
   const currentProject = storedProjects[projectId] || null
   
-  // 初始时使用原始数据，避免SSR水合错误
-  const initialFiles = getStoredFiles(projectId)
-
+  // 初始时使用空数组，避免使用可能包含已删除文件的localStorage数据
   const [project, setProject] = useState<Project | null>(currentProject)
-  const [files, setFiles] = useState<FileItem[]>(initialFiles)
-  const [filteredFiles, setFilteredFiles] = useState<FileItem[]>(initialFiles)
+  const [files, setFiles] = useState<FileItem[]>([])
+  const [filteredFiles, setFilteredFiles] = useState<FileItem[]>([])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStage, setSelectedStage] = useState('全部')
@@ -454,6 +464,9 @@ export default function ProjectDetailPage() {
         setFiles(apiFiles)
         setFilteredFiles(apiFiles)
         setProjectStats(stats)
+        
+        // 同步最新数据到localStorage
+        saveFilesToStorage(projectId, apiFiles)
         
         // 同步更新项目统计到同步服务
         await projectSync.updateProjectFileStats(projectId)
@@ -561,8 +574,17 @@ export default function ProjectDetailPage() {
   }, [files, searchQuery, selectedStage, selectedType])
 
   // 改进的文件图标函数
-  const getFileIcon = (type: string) => {
-    if (type.startsWith('image/')) {
+  const getFileIcon = (type: string, fileName: string) => {
+    // 先检查文件扩展名以支持Markdown
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    if (extension === 'md' || extension === 'markdown') {
+      return (
+        <div className="h-8 w-8 bg-purple-600 rounded flex items-center justify-center">
+          <CodeBracketIcon className="h-5 w-5 text-white" />
+        </div>
+      )
+    } else if (type.startsWith('image/')) {
       return <PhotoIcon className="h-8 w-8 text-blue-500" />
     } else if (type === 'application/pdf') {
       return (
@@ -653,6 +675,9 @@ export default function ProjectDetailPage() {
       setFiles(apiFiles)
       setFilteredFiles(apiFiles)
       setProjectStats(stats)
+      
+      // 同步最新数据到localStorage
+      saveFilesToStorage(projectId, apiFiles)
       
       // 同步更新到项目服务
       await projectSync.updateProjectFileStats(projectId)
@@ -749,7 +774,9 @@ export default function ProjectDetailPage() {
 
 
   const handleDelete = async (fileId: string) => {
-    if (confirm('确定要删除这个文件吗？')) {
+    // 使用更友好的确认方式
+    const confirmed = window.confirm('确定要删除这个文件吗？此操作无法撤销。')
+    if (confirmed) {
       try {
         const response = await fetch(`/api/v1/files/${fileId}`, {
           method: 'DELETE',
@@ -759,8 +786,37 @@ export default function ProjectDetailPage() {
         });
 
         if (response.ok) {
-          await syncAfterFileOperation()
-          alert('文件删除成功！');
+          // 静默删除，先更新UI状态
+          const updatedFiles = files.filter(f => f.id !== fileId)
+          setFiles(updatedFiles)
+          setFilteredFiles(updatedFiles)
+          
+          // 立即更新localStorage，避免刷新时读取到已删除的文件
+          saveFilesToStorage(projectId, updatedFiles)
+          
+          // 延迟重新获取数据，避免立即请求可能导致的竞态条件
+          setTimeout(async () => {
+            try {
+              const [apiFiles, stats] = await Promise.all([
+                fetchProjectFiles(projectId),
+                fetchProjectStats(projectId)
+              ])
+              setFiles(apiFiles)
+              setFilteredFiles(apiFiles)
+              setProjectStats(stats)
+              
+              // 同步最新数据到localStorage
+              saveFilesToStorage(projectId, apiFiles)
+              
+              // 更新项目统计，但不等待完成，避免阻塞
+              projectSync.updateProjectFileStats(projectId).catch(error => {
+                console.warn('更新项目统计失败，但不影响删除操作:', error)
+              })
+            } catch (error) {
+              console.error('重新获取文件列表失败:', error)
+              // 即使重新获取失败，删除操作已经成功，不弹出错误
+            }
+          }, 300) // 延迟300ms重新获取数据
         } else {
           const errorData = await response.json();
           alert(`文件删除失败: ${errorData.message || response.statusText}`);
@@ -1075,7 +1131,7 @@ export default function ProjectDetailPage() {
                 {/* 文件预览 */}
                 <div className="relative aspect-[4/3] bg-gray-50 dark:bg-gray-700 rounded-t-lg overflow-hidden">
                   <div className="flex items-center justify-center h-full">
-                    {getFileIcon(file.type)}
+                    {getFileIcon(file.type, file.name)}
                   </div>
                   
                   {/* 操作按钮 */}
@@ -1205,7 +1261,7 @@ export default function ProjectDetailPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="text-2xl mr-3">
-                            {getFileIcon(file.type)}
+                            {getFileIcon(file.type, file.name)}
                           </div>
                           <div className="flex-1 min-w-0">
                             <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">

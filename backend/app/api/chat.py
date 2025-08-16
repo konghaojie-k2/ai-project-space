@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from pydantic import BaseModel
 from loguru import logger
 
@@ -194,7 +194,8 @@ async def get_messages(conversation_id: str, db: Session = Depends(get_db)):
                 role=msg.role,
                 content=msg.content,
                 timestamp=msg.timestamp,
-                conversation_id=msg.conversation_id
+                conversation_id=msg.conversation_id,
+                model=msg.meta_data.get("model") if msg.meta_data else None
             )
             for msg in messages
         ]
@@ -242,7 +243,8 @@ async def send_message(conversation_id: str, request: ChatRequest, db: Session =
             conversation_id=conversation_id,
             role="assistant",
             content=ai_response.content,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.utcnow(),
+            meta_data={"model": ai_response.model} if hasattr(ai_response, 'model') else {"model": "Claude-3.5"}
         )
         
         db.add(ai_message)
@@ -354,13 +356,18 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
                     }
                     yield f"data: {json.dumps(content_event, ensure_ascii=False)}\n\n"
                 
+                # 获取真实的模型名称
+                from app.services.volcengine_client import volcengine_client
+                model_name = volcengine_client.llm_model
+                
                 # 保存完整的AI回复到数据库
                 ai_message = ChatMessageModel(
                     id=ai_message_id,
                     conversation_id=conversation_id,
                     role="assistant",
                     content=ai_content,
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.utcnow(),
+                    meta_data={"model": model_name}  # 使用真实的模型名称
                 )
                 
                 db.add(ai_message)
@@ -377,7 +384,8 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
                     "content": ai_content,
                     "type": "end",
                     "timestamp": datetime.utcnow().isoformat(),
-                    "total_tokens": len(ai_content.split())  # 简单的token计数
+                    "total_tokens": len(ai_content.split()),  # 简单的token计数
+                    "model": model_name  # 包含真实的模型名称
                 }
                 yield f"data: {json.dumps(end_event, ensure_ascii=False)}\n\n"
                 
@@ -479,3 +487,80 @@ async def health_check():
             "timestamp": datetime.utcnow().isoformat(),
             "error": str(e)
         }
+
+@router.get("/stats")
+async def get_chat_stats(db: Session = Depends(get_db)):
+    """
+    获取聊天统计信息
+    """
+    try:
+        # 统计对话总数
+        total_conversations = db.query(func.count(ConversationModel.id)).scalar()
+        
+        # 统计消息总数
+        total_messages = db.query(func.count(ChatMessageModel.id)).scalar()
+        
+        # 统计AI消息数量
+        ai_messages = db.query(func.count(ChatMessageModel.id)).filter(
+            ChatMessageModel.role == 'assistant'
+        ).scalar()
+        
+        logger.info(f"聊天统计: 对话数={total_conversations}, 消息数={total_messages}, AI消息数={ai_messages}")
+        
+        return {
+            "total_conversations": total_conversations or 0,
+            "total_messages": total_messages or 0,
+            "ai_messages": ai_messages or 0
+        }
+        
+    except Exception as e:
+        logger.error(f"获取聊天统计失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取聊天统计失败: {str(e)}")
+
+@router.get("/debug/model-info")
+async def get_model_info():
+    """
+    获取当前模型配置信息（调试用）
+    """
+    try:
+        from app.services.volcengine_client import volcengine_client
+        return {
+            "llm_model": volcengine_client.llm_model,
+            "embedding_model": volcengine_client.embedding_model,
+            "base_url": volcengine_client.base_url,
+            "api_key_configured": bool(volcengine_client.api_key and volcengine_client.api_key != "dummy_key")
+        }
+    except Exception as e:
+        logger.error(f"获取模型信息失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取模型信息失败: {str(e)}")
+
+@router.post("/debug/fix-old-messages")
+async def fix_old_messages(db: Session = Depends(get_db)):
+    """
+    修复旧消息的模型信息（调试用）
+    """
+    try:
+        from app.services.volcengine_client import volcengine_client
+        
+        # 获取所有没有模型信息的AI消息
+        messages_to_fix = db.query(ChatMessageModel).filter(
+            ChatMessageModel.role == 'assistant',
+            ChatMessageModel.meta_data.is_(None)
+        ).all()
+        
+        updated_count = 0
+        for message in messages_to_fix:
+            message.meta_data = {"model": volcengine_client.llm_model}
+            updated_count += 1
+        
+        db.commit()
+        
+        return {
+            "updated_messages": updated_count,
+            "model_used": volcengine_client.llm_model
+        }
+        
+    except Exception as e:
+        logger.error(f"修复旧消息失败: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"修复旧消息失败: {str(e)}")

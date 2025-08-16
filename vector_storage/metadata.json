@@ -84,5 +84,35 @@
       "upload_time": "2025-08-10T08:17:20.740716",
       "content_length": 34043
     }
+  },
+  "3ae865cf-e048-442e-b1d7-de7bfa1d54bf": {
+    "file_name": "AI历史发展概述.md",
+    "project_id": "1755333190442",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "3ae865cf-e048-442e-b1d7-de7bfa1d54bf",
+      "project_id": "1755333190442",
+      "file_name": "AI历史发展概述.md",
+      "file_type": "text/markdown",
+      "stage": "待分类",
+      "tags": [],
+      "upload_time": "2025-08-16T16:48:04.668781",
+      "content_length": 946
+    }
+  },
+  "630cc28a-d6ab-4d78-b24f-4c6fc7285df5": {
+    "file_name": "AI的历史发展概述.md",
+    "project_id": "1755333190442",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "630cc28a-d6ab-4d78-b24f-4c6fc7285df5",
+      "project_id": "1755333190442",
+      "file_name": "AI的历史发展概述.md",
+      "file_type": "text/markdown",
+      "stage": "待分类",
+      "tags": [],
+      "upload_time": "2025-08-16T16:58:46.493060",
+      "content_length": 946
+    }
   }
 }
