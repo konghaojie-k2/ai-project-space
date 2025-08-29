@@ -1,5 +1,6 @@
-from sqlalchemy import Boolean, Column, String, Text, Table, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, String, Text, Table, ForeignKey, Column
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from typing import Optional, List
 
 from app.models.base import Base
 
@@ -20,22 +21,22 @@ class User(Base):
     __tablename__ = "user"
     
     # 基本信息
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(255), unique=True, index=True, nullable=False)
-    full_name = Column(String(100), nullable=True)
-    avatar_url = Column(String(500), nullable=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     
     # 认证信息
-    hashed_password = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)
-    is_superuser = Column(Boolean, default=False, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
     # 个人设置
-    bio = Column(Text, nullable=True)
-    phone = Column(String(20), nullable=True)
-    department = Column(String(100), nullable=True)
-    position = Column(String(100), nullable=True)
+    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    department: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    position: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     
     # 关联关系
     projects = relationship(

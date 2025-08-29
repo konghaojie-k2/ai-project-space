@@ -114,5 +114,35 @@
       "upload_time": "2025-08-16T16:58:46.493060",
       "content_length": 946
     }
+  },
+  "9ee5c6a3-9149-439c-97a4-491488743efa": {
+    "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+    "project_id": "1756472340229",
+    "chunks_count": 33,
+    "metadata": {
+      "file_id": "9ee5c6a3-9149-439c-97a4-491488743efa",
+      "project_id": "1756472340229",
+      "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-08-29T21:00:09.462730",
+      "content_length": 26444
+    }
+  },
+  "311d2b00-6104-48bc-abf2-5742482d5a4d": {
+    "file_name": "示例刻蚀速率预测模型特征工程.md",
+    "project_id": "1756472340229",
+    "chunks_count": 2,
+    "metadata": {
+      "file_id": "311d2b00-6104-48bc-abf2-5742482d5a4d",
+      "project_id": "1756472340229",
+      "file_name": "示例刻蚀速率预测模型特征工程.md",
+      "file_type": "text/markdown",
+      "stage": "数据理解",
+      "tags": [],
+      "upload_time": "2025-08-29T21:05:03.386295",
+      "content_length": 1894
+    }
   }
 }

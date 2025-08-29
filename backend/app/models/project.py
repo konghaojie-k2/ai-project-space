@@ -1,5 +1,6 @@
-from sqlalchemy import Boolean, Column, String, Text, Integer, ForeignKey, Enum
-from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, String, Text, Integer, ForeignKey, Enum
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from typing import Optional, List
 import enum
 
 from app.models.base import Base
@@ -31,20 +32,20 @@ class Project(Base):
     __tablename__ = "project"
     
     # 基本信息
-    name = Column(String(200), nullable=False, index=True)
-    description = Column(Text, nullable=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # 项目状态
-    status = Column(Enum(ProjectStatus), default=ProjectStatus.DRAFT, nullable=False)
-    current_stage = Column(Enum(ProjectStage), default=ProjectStage.PRE_SALES, nullable=False)
+    status: Mapped[ProjectStatus] = mapped_column(Enum(ProjectStatus), default=ProjectStatus.DRAFT, nullable=False)
+    current_stage: Mapped[ProjectStage] = mapped_column(Enum(ProjectStage), default=ProjectStage.PRE_SALES, nullable=False)
     
     # 项目设置
-    is_public = Column(Boolean, default=False, nullable=False)
-    allow_file_upload = Column(Boolean, default=True, nullable=False)
-    allow_ai_chat = Column(Boolean, default=True, nullable=False)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_file_upload: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_ai_chat: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     # 创建者
-    creator_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     
     # 关联关系
     creator = relationship("User", back_populates="created_projects", foreign_keys=[creator_id])
