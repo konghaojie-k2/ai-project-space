@@ -1,8 +1,15 @@
-# Python
+# ====================================
+# AI项目管理系统 - .gitignore 配置
+# ====================================
+
+# ============== Python ==============
+# 字节码文件
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# 分发和打包
 .Python
 build/
 develop-eggs/
@@ -26,17 +33,16 @@ MANIFEST
 *.manifest
 *.spec
 
-# Installer logs
+# 安装日志
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
+# 测试和覆盖率
 htmlcov/
 .tox/
 .nox/
 .coverage
 .coverage.*
-.cache
 nosetests.xml
 coverage.xml
 *.cover
@@ -45,24 +51,24 @@ coverage.xml
 .pytest_cache/
 cover/
 
-# Translations
+# 翻译文件
 *.mo
 *.pot
 
-# Django stuff:
+# Django
 *.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Flask stuff:
+# Flask
 instance/
 .webassets-cache
 
-# Scrapy stuff:
+# Scrapy
 .scrapy
 
-# Sphinx documentation
+# Sphinx 文档
 docs/_build/
 
 # PyBuilder
@@ -91,14 +97,14 @@ poetry.lock
 # PEP 582
 __pypackages__/
 
-# Celery stuff
+# Celery
 celerybeat-schedule
 celerybeat.pid
 
-# SageMath parsed files
+# SageMath
 *.sage.py
 
-# Environments
+# 虚拟环境
 .env
 .venv
 env/
@@ -107,146 +113,132 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
+# Spyder 项目设置
 .spyderproject
 .spyproject
 
-# Rope project settings
+# Rope 项目设置
 .ropeproject
 
-# mkdocs documentation
+# mkdocs 文档
 /site
 
-# mypy
+# 类型检查器
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-
-# pytype static type analyzer
 .pytype/
 
-# Cython debug symbols
+# Cython 调试符号
 cython_debug/
 
-# Node.js
+# ============== Node.js / Next.js ==============
+# 依赖目录
 node_modules/
+jspm_packages/
+
+# 包管理器日志
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
-# Diagnostic reports (https://nodejs.org/api/report.html)
+# 诊断报告
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
-# Runtime data
+# 运行时数据
 pids
 *.pid
 *.seed
 *.pid.lock
 
-# Coverage directory used by tools like istanbul
+# 覆盖率目录
 coverage/
 *.lcov
-
-# nyc test coverage
 .nyc_output
 
-# Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
+# 构建工具中间存储
 .grunt
 
-# Bower dependency directory (https://bower.io/)
+# Bower 依赖目录
 bower_components
 
-# node-waf configuration
+# node-waf 配置
 .lock-wscript
 
-# Compiled binary addons (https://nodejs.org/api/addons.html)
+# 编译的二进制插件
 build/Release
 
-# Dependency directories
-node_modules/
-jspm_packages/
-
-# Snowpack dependency directory (https://snowpack.dev/)
+# Snowpack 依赖目录
 web_modules/
 
-# TypeScript cache
+# TypeScript 缓存
 *.tsbuildinfo
 
-# Optional npm cache directory
+# npm 缓存目录
 .npm
 
-# Optional eslint cache
+# ESLint 缓存
 .eslintcache
 
-# Optional stylelint cache
+# Stylelint 缓存
 .stylelintcache
 
-# Microbundle cache
+# Microbundle 缓存
 .rpt2_cache/
 .rts2_cache_cjs/
 .rts2_cache_es/
 .rts2_cache_umd/
 
-# Optional REPL history
+# REPL 历史
 .node_repl_history
 
-# Output of 'npm pack'
+# npm pack 输出
 *.tgz
 
-# Yarn Integrity file
+# Yarn 完整性文件
 .yarn-integrity
 
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
+# parcel-bundler 缓存
 .parcel-cache
 
-# Next.js build output
-.next
+# Next.js 构建输出
+.next/
 out/
+next-env.d.ts
 
-# Nuxt.js build / generate output
+# Nuxt.js 构建/生成输出
 .nuxt
-dist
+dist/
 
-# Gatsby files
+# Gatsby 文件
 .cache/
-public
+public/
 
-# Vuepress build output
+# Vuepress 构建输出
 .vuepress/dist
 
-# Vuepress v2.x temp and cache directory
+# Vuepress v2.x 临时和缓存目录
 .temp
-.cache
 
-# Docusaurus cache and generated files
+# Docusaurus 缓存和生成文件
 .docusaurus
 
-# Serverless directories
+# Serverless 目录
 .serverless/
 
-# FuseBox cache
+# FuseBox 缓存
 .fusebox/
 
-# DynamoDB Local files
+# DynamoDB Local 文件
 .dynamodb/
 
-# TernJS port file
+# TernJS 端口文件
 .tern-port
 
-# Stores VSCode versions used for testing VSCode extensions
+# VSCode 扩展测试版本存储
 .vscode-test
 
 # yarn v2
@@ -256,74 +248,94 @@ public
 .yarn/install-state.gz
 .pnp.*
 
-# IDE
+# ============== 环境变量文件 ==============
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
+# ============== IDE 和编辑器 ==============
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Logs
-logs/
-*.log
-
-# Runtime data
-uploads/
-temp/
-static/
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Cache
-.cache/
-*.cache
-
-# Docker
-.dockerignore
-
-# Project specific
-# 临时文件目录
-temp/
-logs/
-uploads/
-static/
-
-# 数据库文件
-*.db
-*.sqlite*
-
-# 配置文件中的敏感信息
-config/local.py
-.env.local
-.env.production
-
-# UV 包管理器
-.uv/
-
-# 备份文件
-*.bak
-*.backup
-*.orig
-
-# 编辑器临时文件
 .#*
 #*#
 .*.swp
 .*.swo
 
-# 测试文件
+# ============== 操作系统 ==============
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+ehthumbs.db
+Thumbs.db
+
+# ============== 日志文件 ==============
+logs/
+*.log
+backend/logs/
+frontend/logs/
+
+# ============== 上传和临时文件 ==============
+uploads/
+temp/
+static/
+backend/uploads/
+backend/temp/
+frontend/temp/
+
+# ============== 数据库文件 ==============
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+backend/data/
+backend/*.db
+
+# ============== 缓存 ==============
+.cache/
+*.cache
+
+# ============== Docker ==============
+.dockerignore
+
+# ============== UV 包管理器 ==============
+.uv/
+uv.lock.backup
+
+# ============== 测试相关 ==============
 test_*.py
 *_test.py
-tests/temp/ 
+tests/temp/
+playwright-report/
+test-results/
+
+# ============== 备份文件 ==============
+*.bak
+*.backup
+*.orig
+
+# ============== 项目特定 ==============
+# 向量存储
+vector_storage/
+backend/data/chromadb/
+
+# 模型文件
+models/
+*.model
+*.pkl
+
+# 配置文件中的敏感信息
+config/local.py
+
+# AI 服务日志
+backend/logs/ai_service*.log 
