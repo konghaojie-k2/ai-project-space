@@ -16,6 +16,7 @@ import {
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
+import { useUserStore } from '@/lib/stores/userStore'
 
 interface SidebarProps {
   isOpen: boolean
@@ -65,7 +66,7 @@ const navigation = [
     current: false
   },
   {
-    name: '团队协作',
+    name: '团队管理',
     href: '/dashboard/team',
     icon: UsersIcon,
     current: false
@@ -81,6 +82,7 @@ const bottomNavigation = [
 ]
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
+  const { user } = useUserStore()
   const pathname = usePathname()
   const [expandedItems, setExpandedItems] = useState<string[]>(['项目管理'])
 
@@ -195,6 +197,33 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               </span>
             </Link>
           </div>
+
+          {/* 当前用户状态 */}
+          {user && (
+            <div className={`px-4 py-3 border-b border-secondary-200 ${
+              user.is_superuser 
+                ? 'bg-gradient-to-r from-purple-50 to-blue-50' 
+                : 'bg-gradient-to-r from-gray-50 to-blue-50'
+            }`}>
+              <div className="flex items-center space-x-2">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                  user.is_superuser ? 'bg-purple-600' : 'bg-blue-600'
+                }`}>
+                  <span className="text-white text-sm font-bold">
+                    {user.is_superuser ? '👑' : '👤'}
+                  </span>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-900">
+                    {user.username}
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {user.is_superuser ? '🔧 系统管理员' : '📁 团队成员'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 导航菜单 */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">

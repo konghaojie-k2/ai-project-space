@@ -84,7 +84,13 @@ export default function LoginPage() {
         </div>
 
         {/* 登录表单 */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit(onSubmit)}>
+        <form 
+          className="mt-8 space-y-6" 
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSubmit(onSubmit)(e)
+          }}
+        >
           {/* 全局错误信息 */}
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
@@ -94,39 +100,59 @@ export default function LoginPage() {
 
           <div className="space-y-4">
             {/* 邮箱输入 */}
-            <FormField
-              name="email"
-              type="email"
-              label="邮箱地址"
-              placeholder="请输入邮箱地址"
-              register={register}
-              error={errors.email}
-              leftIcon={<EnvelopeIcon />}
-              required
-              autoComplete="email"
-            />
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium leading-6 text-gray-900">
+                邮箱地址 <span className="text-red-500">*</span>
+              </label>
+              <div className="mt-2 relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                  <EnvelopeIcon className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  {...register('email')}
+                  className="block w-full rounded-lg border-0 py-2.5 pl-10 pr-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6"
+                  placeholder="请输入邮箱地址"
+                />
+              </div>
+              {errors.email && (
+                <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
+              )}
+            </div>
 
             {/* 密码输入 */}
-            <FormField
-              name="password"
-              type={showPassword ? 'text' : 'password'}
-              label="密码"
-              placeholder="请输入密码"
-              register={register}
-              error={errors.password}
-              leftIcon={<LockClosedIcon />}
-              rightIcon={
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-secondary-400 hover:text-secondary-600"
-                >
-                  {showPassword ? <EyeSlashIcon /> : <EyeIcon />}
-                </button>
-              }
-              required
-              autoComplete="current-password"
-            />
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium leading-6 text-gray-900">
+                密码 <span className="text-red-500">*</span>
+              </label>
+              <div className="mt-2 relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                  <LockClosedIcon className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  {...register('password')}
+                  className="block w-full rounded-lg border-0 py-2.5 pl-10 pr-10 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6"
+                  placeholder="请输入密码"
+                />
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
+              {errors.password && (
+                <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>
+              )}
+            </div>
           </div>
 
           {/* 记住我和忘记密码 */}

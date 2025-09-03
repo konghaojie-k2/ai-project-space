@@ -18,6 +18,7 @@ from loguru import logger
 
 from ..core.database import get_db
 from ..services.ai_service import ai_service
+from ..models.user import User
 from ..models.chat import (
     Conversation as ConversationModel,
     ChatMessage as ChatMessageModel,
@@ -34,8 +35,15 @@ from ..models.chat import (
 
 router = APIRouter(tags=["chat"])
 
+# 导入认证依赖
+from .api_v1.endpoints.auth import get_current_user
+
 @router.post("/conversations", response_model=ConversationResponse)
-async def create_conversation(request: ConversationCreate, db: Session = Depends(get_db)):
+async def create_conversation(
+    request: ConversationCreate, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """创建新会话"""
     try:
         conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
@@ -207,7 +215,12 @@ async def get_messages(conversation_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="获取消息失败")
 
 @router.post("/conversations/{conversation_id}/messages", response_model=ChatResponse)
-async def send_message(conversation_id: str, request: ChatRequest, db: Session = Depends(get_db)):
+async def send_message(
+    conversation_id: str, 
+    request: ChatRequest, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """发送消息（非流式）"""
     try:
         # 验证会话存在
@@ -266,7 +279,12 @@ async def send_message(conversation_id: str, request: ChatRequest, db: Session =
         raise HTTPException(status_code=500, detail="发送消息失败")
 
 @router.post("/conversations/{conversation_id}/messages/stream")
-async def send_message_stream(conversation_id: str, request: ChatRequest, db: Session = Depends(get_db)):
+async def send_message_stream(
+    conversation_id: str, 
+    request: ChatRequest, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """发送消息（流式响应）- 数据库持久化版本"""
     try:
         # 验证会话存在
@@ -424,12 +442,17 @@ async def send_message_stream(conversation_id: str, request: ChatRequest, db: Se
         raise HTTPException(status_code=500, detail="发送流式消息失败")
 
 @router.post("/search", response_model=List[DocumentSearchResponse])
-async def search_documents(request: DocumentSearchRequest):
+async def search_documents(
+    request: DocumentSearchRequest,
+    current_user: User = Depends(get_current_user)
+):
     """搜索相关文档"""
     try:
         results = await ai_service.search_similar_documents(
             query=request.query,
-            n_results=request.n_results
+            top_k=request.n_results,
+            user_id=current_user.id,
+            is_admin=current_user.is_superuser
         )
         
         return [

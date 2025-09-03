@@ -4,7 +4,7 @@ from typing import Optional, List
 import enum
 
 from app.models.base import Base
-from app.models.user import user_project_association
+# from app.models.user import user_project_association  # 暂时注释掉
 
 
 class ProjectStage(str, enum.Enum):
@@ -47,32 +47,32 @@ class Project(Base):
     # 创建者
     creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     
-    # 关联关系
-    creator = relationship("User", back_populates="created_projects", foreign_keys=[creator_id])
+    # 关联关系 - 暂时注释掉以避免循环导入问题
+    # creator = relationship("User", back_populates="created_projects", foreign_keys=[creator_id])
     
-    members = relationship(
-        "User",
-        secondary=user_project_association,
-        back_populates="projects"
-    )
+    # members = relationship(
+    #     "User",
+    #     secondary=user_project_association,
+    #     back_populates="projects"
+    # )
     
-    files = relationship(
-        "ProjectFile",
-        back_populates="project",
-        cascade="all, delete-orphan"
-    )
+    # files = relationship(
+    #     "ProjectFile",
+    #     back_populates="project",
+    #     cascade="all, delete-orphan"
+    # )
     
-    qa_sessions = relationship(
-        "QASession",
-        back_populates="project",
-        cascade="all, delete-orphan"
-    )
+    # qa_sessions = relationship(
+    #     "QASession",
+    #     back_populates="project",
+    #     cascade="all, delete-orphan"
+    # )
     
-    notes = relationship(
-        "Note",
-        back_populates="project",
-        cascade="all, delete-orphan"
-    )
+    # notes = relationship(
+    #     "Note",
+    #     back_populates="project",
+    #     cascade="all, delete-orphan"
+    # )
     
     def __repr__(self) -> str:
         return f"<Project(id={self.id}, name='{self.name}', status='{self.status}')>" 

@@ -5,14 +5,14 @@ from typing import Optional, List
 from app.models.base import Base
 
 
-# 用户-项目关联表
-user_project_association = Table(
-    'user_project_association',
-    Base.metadata,
-    Column('user_id', ForeignKey('user.id'), primary_key=True),
-    Column('project_id', ForeignKey('project.id'), primary_key=True),
-    Column('role', String(50), default='member')  # admin, manager, member, viewer
-)
+# 用户-项目关联表 - 暂时注释掉以避免外键关系问题
+# user_project_association = Table(
+#     'user_project_association',
+#     Base.metadata,
+#     Column('user_id', ForeignKey('user.id'), primary_key=True),
+#     Column('project_id', ForeignKey('project.id'), primary_key=True),
+#     Column('role', String(50), default='member')  # admin, manager, member, viewer
+# )
 
 
 class User(Base):
@@ -38,33 +38,33 @@ class User(Base):
     department: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     position: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     
-    # 关联关系
-    projects = relationship(
-        "Project",
-        secondary=user_project_association,
-        back_populates="members"
-    )
+    # 关联关系 - 暂时注释掉以避免循环导入问题
+    # projects = relationship(
+    #     "Project",
+    #     secondary=user_project_association,
+    #     back_populates="members"
+    # )
     
-    created_projects = relationship(
-        "Project",
-        back_populates="creator",
-        foreign_keys="Project.creator_id"
-    )
+    # created_projects = relationship(
+    #     "Project",
+    #     back_populates="creator",
+    #     foreign_keys="Project.creator_id"
+    # )
     
-    uploaded_files = relationship(
-        "ProjectFile",
-        back_populates="uploader"
-    )
+    # uploaded_files = relationship(
+    #     "FileRecord",
+    #     back_populates="uploader"
+    # )
     
-    qa_sessions = relationship(
-        "QASession",
-        back_populates="user"
-    )
+    # qa_sessions = relationship(
+    #     "QASession",
+    #     back_populates="user"
+    # )
     
-    notes = relationship(
-        "Note",
-        back_populates="author"
-    )
+    # notes = relationship(
+    #     "Note",
+    #     back_populates="author"
+    # )
     
     def __repr__(self) -> str:
         return f"<User(id={self.id}, username='{self.username}', email='{self.email}')>" 

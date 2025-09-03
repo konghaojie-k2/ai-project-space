@@ -330,7 +330,9 @@ class AIService:
         self, 
         query: str, 
         project_id: Optional[str] = None,
-        top_k: int = 3
+        top_k: int = 3,
+        user_id: Optional[int] = None,
+        is_admin: bool = False
     ) -> List[DocumentSearchResult]:
         """搜索相似文档 - 使用豆包Embedding"""
         try:
@@ -353,6 +355,20 @@ class AIService:
                 
                 file_id = doc.metadata.get("file_id", "unknown")
                 file_name = doc.metadata.get("file_name", "Unknown")
+                
+                # 文件权限过滤
+                if user_id is not None:
+                    # 检查用户是否有权限访问这个文件
+                    from app.services.file_service import FileService
+                    from app.core.database import SessionLocal
+                    
+                    db = SessionLocal()
+                    try:
+                        file_service = FileService(db)
+                        if not file_service.user_can_access_file(user_id, file_id, is_admin):
+                            continue  # 跳过无权限的文件
+                    finally:
+                        db.close()
                 
                 # 避免重复文件，每个文件只取最相关的chunk
                 if file_id in seen_files:

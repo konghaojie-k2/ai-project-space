@@ -3,6 +3,12 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+class FileAccessLevel(str, Enum):
+    """文件访问级别枚举"""
+    ALL_USERS = "all_users"      # 全员可见
+    ADMINS_ONLY = "admins_only"  # 仅管理员
+    OWNER_ONLY = "owner_only"    # 仅上传者
+
 class FileStage(str, Enum):
     """项目阶段枚举"""
     PRESALES = "presales"
@@ -26,6 +32,7 @@ class FileBase(BaseModel):
     stage: str = Field(..., description="项目阶段")
     tags: List[str] = Field(default_factory=list, description="标签列表")
     is_public: bool = Field(False, description="是否公开")
+    access_level: FileAccessLevel = Field(FileAccessLevel.ALL_USERS, description="访问级别")
 
 class FileCreate(FileBase):
     """创建文件模式"""
@@ -34,6 +41,7 @@ class FileCreate(FileBase):
     file_size: int = Field(..., description="文件大小")
     file_type: str = Field(..., description="文件类型")
     uploaded_by: str = Field(..., description="上传者")
+    user_id: Optional[int] = Field(None, description="上传用户ID")
     
     @validator('file_size')
     def validate_file_size(cls, v):
@@ -71,7 +79,11 @@ class FileResponse(FileBase):
     # 状态信息
     is_processed: bool = Field(False, description="是否已处理")
     
+    # 访问权限
+    access_level: FileAccessLevel = Field(FileAccessLevel.ALL_USERS, description="访问级别")
+    
     # 用户信息
+    user_id: Optional[int] = Field(None, description="上传用户ID")
     uploaded_by: str = Field(..., description="上传者")
     updated_by: Optional[str] = Field(None, description="更新者")
     

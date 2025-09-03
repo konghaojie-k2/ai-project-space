@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useUserStore } from '@/lib/stores/userStore'
 import { 
   ArrowRightIcon,
   CloudArrowUpIcon,
@@ -49,24 +51,24 @@ const projectStages = [
 ]
 
 export default function HomePage() {
+  const router = useRouter()
+  const { user, loading } = useUserStore()
   const [isLoaded, setIsLoaded] = useState(false)
-  const [stats, setStats] = useState({
-    projects: 0,
-    files: 0,
-    conversations: 0
-  })
-
+  
   useEffect(() => {
     setIsLoaded(true)
-    // 模拟加载统计数据
-    setTimeout(() => {
-      setStats({
-        projects: 12,
-        files: 156,
-        conversations: 324
-      })
-    }, 1000)
-  }, [])
+    
+    // 如果用户已登录，根据权限重定向
+    if (!loading && user) {
+      if (user.is_superuser) {
+        // 管理员重定向到dashboard
+        router.push('/dashboard')
+      } else {
+        // 普通用户重定向到工作空间
+        router.push('/workspace')
+      }
+    }
+  }, [user, loading, router])
 
   return (
     <div className={`min-h-screen transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}>
@@ -83,49 +85,34 @@ export default function HomePage() {
               AI加持的智能项目管理，让协作更高效
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center animate-slide-up animation-delay-400">
-              <Link 
-                href="/dashboard" 
-                className="btn btn-primary bg-white text-primary-700 hover:bg-primary-50 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300 transform hover:scale-105"
-              >
-                开始使用
-                <ArrowRightIcon className="w-5 h-5 ml-2 inline" />
-              </Link>
-              <Link 
-                href="/demo" 
-                className="btn border-2 border-white text-white hover:bg-white hover:text-primary-700 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300"
-              >
-                查看演示
-              </Link>
+              {!loading && !user ? (
+                <>
+                  <Link 
+                    href="/login" 
+                    className="btn btn-primary bg-white text-primary-700 hover:bg-primary-50 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300 transform hover:scale-105"
+                  >
+                    立即登录
+                    <ArrowRightIcon className="w-5 h-5 ml-2 inline" />
+                  </Link>
+                  <Link 
+                    href="/register" 
+                    className="btn border-2 border-white text-white hover:bg-white hover:text-primary-700 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300"
+                  >
+                    注册账户
+                  </Link>
+                </>
+              ) : (
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto"></div>
+                  <p className="mt-2 text-primary-100">正在重定向...</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-16 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="text-4xl font-bold text-primary-600 mb-2">
-                {stats.projects}
-              </div>
-              <div className="text-secondary-600">活跃项目</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-green-600 mb-2">
-                {stats.files}
-              </div>
-              <div className="text-secondary-600">文件数量</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-purple-600 mb-2">
-                {stats.conversations}
-              </div>
-              <div className="text-secondary-600">AI对话次数</div>
-            </div>
-          </div>
-        </div>
-      </section>
+
 
       {/* Features Section */}
       <section className="py-20 bg-secondary-50">

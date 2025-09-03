@@ -12,12 +12,16 @@ from app.core.config import settings
 from app.core.logging import app_logger
 from app.core.database import get_db
 from app.models.file import FileRecord
+from app.models.user import User
 from app.schemas.file import FileCreate, FileResponse, FileUpdate
 from app.services.file_service import FileService
 from app.services.file_storage import LocalFileService
 from app.utils.file_utils import get_file_type, validate_file_size, validate_file_type
 
 router = APIRouter()
+
+# 导入认证依赖
+from app.api.api_v1.endpoints.auth import get_current_user, get_current_admin_user
 
 # 依赖注入
 def get_file_service(db: Session = Depends(get_db)):
@@ -33,7 +37,8 @@ async def upload_files(
     project_id: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    uploaded_by: Optional[str] = Form("管理员"),
+    access_level: str = Form("all_users"),  # 访问级别，默认全员
+    current_user: User = Depends(get_current_user),
     file_service: FileService = Depends(get_file_service),
     storage_service: LocalFileService = Depends(get_storage_service)
 ):
@@ -88,6 +93,9 @@ async def upload_files(
             # 创建文件记录
             app_logger.info(f"🔥 开始创建数据库记录")
             try:
+                # 导入访问级别枚举
+                from app.schemas.file import FileAccessLevel
+                
                 file_create = FileCreate(
                     original_name=file.filename,
                     stored_name=stored_filename,
@@ -98,7 +106,9 @@ async def upload_files(
                     stage=stage,
                     tags=tags_list,
                     description=description,
-                    uploaded_by=uploaded_by
+                    uploaded_by=current_user.username,
+                    user_id=current_user.id,
+                    access_level=FileAccessLevel(access_level)  # 使用传入的访问级别
                 )
                 app_logger.info(f"🔥 FileCreate对象创建成功: {file_create}")
                 
@@ -190,22 +200,37 @@ async def list_files(
     search: Optional[str] = Query(None, description="搜索关键词"),
     page: int = Query(1, ge=1, description="页码"),
     size: int = Query(20, ge=1, le=100, description="每页数量"),
+    current_user: User = Depends(get_current_user),
     file_service: FileService = Depends(get_file_service)
 ):
     """
-    获取文件列表
+    获取文件列表 - 基于用户权限
     """
     try:
         tags_list = tags.split(",") if tags else None
         
-        files = file_service.get_files(
-            project_id=project_id,
-            stage=stage,
-            tags=tags_list,
-            search=search,
-            page=page,
-            size=size
-        )
+        # 管理员可以查看所有文件，普通用户只能查看自己的文件
+        if current_user.is_superuser:
+            # 管理员：获取所有文件
+            files = file_service.get_files(
+                project_id=project_id,
+                stage=stage,
+                tags=tags_list,
+                search=search,
+                page=page,
+                size=size
+            )
+        else:
+            # 普通用户：只获取自己上传的文件
+            files = file_service.get_files_by_user(
+                user_id=current_user.id,
+                project_id=project_id,
+                stage=stage,
+                tags=tags_list,
+                search=search,
+                page=page,
+                size=size
+            )
         
         return files
         
@@ -216,15 +241,20 @@ async def list_files(
 @router.get("/{file_id}", response_model=FileResponse)
 async def get_file(
     file_id: str,
+    current_user: User = Depends(get_current_user),
     file_service: FileService = Depends(get_file_service)
 ):
     """
-    获取文件详情
+    获取文件详情 - 基于用户权限
     """
     try:
         file_record = file_service.get_file_by_id(file_id)
         if not file_record:
             raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 权限检查：基于新的访问级别系统
+        if not file_service.user_can_access_file(current_user.id, file_id, current_user.is_superuser):
+            raise HTTPException(status_code=403, detail="无权限访问此文件")
         
         return file_record
         
@@ -237,17 +267,22 @@ async def get_file(
 @router.get("/{file_id}/download")
 async def download_file(
     file_id: str,
+    current_user: User = Depends(get_current_user),
     file_service: FileService = Depends(get_file_service),
     storage_service: LocalFileService = Depends(get_storage_service)
 ):
     """
-    下载文件
+    下载文件 - 基于用户权限
     """
     try:
         # 获取文件记录
         file_record = file_service.get_file_by_id(file_id)
         if not file_record:
             raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 权限检查：基于新的访问级别系统
+        if not file_service.user_can_access_file(current_user.id, file_id, current_user.is_superuser):
+            raise HTTPException(status_code=403, detail="无权限下载此文件")
         
         # 从本地存储获取文件 - 注意：这里不要使用await，因为download_file返回的是AsyncIterator
         file_data = storage_service.download_file(

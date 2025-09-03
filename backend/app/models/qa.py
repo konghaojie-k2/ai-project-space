@@ -39,10 +39,10 @@ class QASession(Base):
     is_saved_as_note = Column(Boolean, default=False, nullable=False)
     note_id = Column(Integer, ForeignKey("note.id"), nullable=True)
     
-    # 关联关系
-    project = relationship("Project", back_populates="qa_sessions")
-    user = relationship("User", back_populates="qa_sessions")
-    note = relationship("Note", back_populates="qa_session", uselist=False)
+    # 关联关系 - 暂时注释掉以避免循环导入问题
+    # project = relationship("Project", back_populates="qa_sessions")
+    # user = relationship("User", back_populates="qa_sessions")
+    # note = relationship("Note", back_populates="qa_session", uselist=False)
     
     def __repr__(self) -> str:
         return f"<QASession(id={self.id}, question='{self.question[:50]}...', rating={self.rating})>"
@@ -78,10 +78,10 @@ class Note(Base):
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
     author_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     
-    # 关联关系
-    project = relationship("Project", back_populates="notes")
-    author = relationship("User", back_populates="notes")
-    qa_session = relationship("QASession", back_populates="note", uselist=False)
+    # 关联关系 - 暂时注释掉以避免循环导入问题
+    # project = relationship("Project", back_populates="notes")
+    # author = relationship("User", back_populates="notes")
+    # qa_session = relationship("QASession", back_populates="note", uselist=False)
     
     def __repr__(self) -> str:
         return f"<Note(id={self.id}, title='{self.title}', author_id={self.author_id})>"
@@ -95,9 +95,9 @@ class NoteLike(Base):
     note_id = Column(Integer, ForeignKey("note.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     
-    # 关联关系
-    note = relationship("Note")
-    user = relationship("User")
+    # 关联关系 - 暂时注释掉以避免循环导入问题
+    # note = relationship("Note")
+    # user = relationship("User")
     
     def __repr__(self) -> str:
         return f"<NoteLike(note_id={self.note_id}, user_id={self.user_id})>" 

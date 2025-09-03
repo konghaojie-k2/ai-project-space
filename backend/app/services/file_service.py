@@ -48,7 +48,9 @@ class FileService:
                 tags=file_create.tags,
                 description=file_create.description,
                 uploaded_by=file_create.uploaded_by,
-                is_public=file_create.is_public
+                user_id=file_create.user_id,
+                is_public=file_create.is_public,
+                access_level=file_create.access_level
             )
             logger.info(f"🔥 FileRecord对象创建成功: {file_record}")
             
@@ -116,6 +118,90 @@ class FileService:
             logger.error(f"获取文件记录失败: {e}")
             raise
     
+    def get_files_by_user(
+        self,
+        user_id: int,
+        project_id: Optional[str] = None,
+        stage: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        size: int = 20
+    ) -> List[FileResponse]:
+        """
+        获取用户的文件列表
+        """
+        try:
+            # 导入枚举
+            from app.models.file import FileAccessLevel
+            
+            query = self.db.query(FileRecord).filter(
+                FileRecord.is_deleted == False,
+                or_(
+                    FileRecord.access_level == FileAccessLevel.ALL_USERS,  # 全员可见
+                    FileRecord.user_id == user_id,  # 用户自己的文件
+                    FileRecord.is_public == True     # 或者公开文件（向后兼容）
+                )
+            )
+            
+            # 应用筛选条件
+            if project_id:
+                query = query.filter(FileRecord.project_id == project_id)
+            if stage:
+                query = query.filter(FileRecord.stage == stage)
+            if tags:
+                for tag in tags:
+                    query = query.filter(FileRecord.tags.contains([tag]))
+            if search:
+                query = query.filter(
+                    or_(
+                        FileRecord.original_name.contains(search),
+                        FileRecord.description.contains(search)
+                    )
+                )
+            
+            # 分页
+            offset = (page - 1) * size
+            files = query.order_by(desc(FileRecord.created_at)).offset(offset).limit(size).all()
+            
+            return [FileResponse.from_orm(file) for file in files]
+            
+        except Exception as e:
+            logger.error(f"获取用户文件列表失败: {str(e)}")
+            raise
+
+    def user_can_access_file(self, user_id: int, file_id: str, is_admin: bool = False) -> bool:
+        """
+        检查用户是否可以访问指定文件
+        基于新的访问级别系统
+        """
+        try:
+            file_record = self.db.query(FileRecord).filter(
+                FileRecord.id == file_id,
+                FileRecord.is_deleted == False
+            ).first()
+            
+            if not file_record:
+                return False
+            
+            # 导入枚举
+            from app.models.file import FileAccessLevel
+            
+            # 根据访问级别判断权限
+            if file_record.access_level == FileAccessLevel.ALL_USERS:
+                return True  # 全员可见
+            elif file_record.access_level == FileAccessLevel.ADMINS_ONLY:
+                return is_admin  # 仅管理员
+            elif file_record.access_level == FileAccessLevel.OWNER_ONLY:
+                return file_record.user_id == user_id  # 仅上传者
+            
+            # 向后兼容：如果没有设置access_level，使用原来的逻辑
+            return file_record.user_id == user_id or file_record.is_public
+            
+        except Exception as e:
+            logger.error(f"检查文件访问权限失败: {str(e)}")
+            return False
+
     def get_files(
         self,
         project_id: Optional[str] = None,
