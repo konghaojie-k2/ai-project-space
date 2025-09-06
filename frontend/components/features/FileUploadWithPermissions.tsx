@@ -123,13 +123,8 @@ export default function FileUploadWithPermissions({
         
         setUploadProgress(prev => ({ ...prev, [file.id]: 0 }))
 
-        const response = await fetch('http://localhost:8000/api/v1/files/upload', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          body: formData
-        })
+        const { apiUpload } = await import('@/lib/api');
+        const response = await apiUpload('/api/v1/files/upload', formData)
 
         if (response.ok) {
           const result = await response.json()

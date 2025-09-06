@@ -81,7 +81,10 @@ async def create_conversation(
         raise HTTPException(status_code=500, detail="创建会话失败")
 
 @router.get("/conversations", response_model=List[ConversationResponse])
-async def get_conversations(db: Session = Depends(get_db)):
+async def get_conversations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """获取会话列表"""
     try:
         # 从数据库获取会话，按更新时间排序
@@ -117,7 +120,11 @@ async def get_conversations(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="获取会话列表失败")
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
-async def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
+async def get_conversation(
+    conversation_id: str, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """获取会话详情"""
     try:
         conversation = db.query(ConversationModel).filter(
@@ -154,7 +161,11 @@ async def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="获取会话详情失败")
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
+async def delete_conversation(
+    conversation_id: str, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """删除会话"""
     try:
         conversation = db.query(ConversationModel).filter(
@@ -180,7 +191,11 @@ async def delete_conversation(conversation_id: str, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail="删除会话失败")
 
 @router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
-async def get_messages(conversation_id: str, db: Session = Depends(get_db)):
+async def get_messages(
+    conversation_id: str, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """获取会话消息"""
     try:
         # 验证会话存在
@@ -243,11 +258,13 @@ async def send_message(
         db.add(user_message)
         db.commit()
         
-        # 调用AI服务
+        # 调用AI服务（带权限过滤）
         ai_response = await ai_service.chat_completion(
             messages=request.messages,
             project_context=request.project_id,
-            model_name=request.model or "gpt-3.5-turbo"
+            model_name=request.model or "gpt-3.5-turbo",
+            user_id=current_user.id,
+            is_admin=current_user.is_superuser
         )
         
         # 保存AI回复到数据库
@@ -311,8 +328,13 @@ async def send_message_stream(
         ai_message_id = f"msg_{uuid.uuid4().hex[:8]}"
         ai_content = ""
         
+        # 在异步生成器外部提取需要的值，避免数据库会话问题
+        user_id = current_user.id
+        is_admin = current_user.is_superuser
+        
         async def generate_stream():
             nonlocal ai_content
+            
             try:
                 # 发送开始事件
                 start_event = {
@@ -325,11 +347,13 @@ async def send_message_stream(
                 
                 buffer = ""  # 用于缓冲不完整的chunks
                 
-                # 调用AI服务获取流式回复
+                # 调用AI服务获取流式回复（带权限过滤）
                 async for chunk in ai_service.chat_completion_stream(
                     messages=request.messages,
                     project_context=request.project_id,
-                    model_name=request.model or "gpt-3.5-turbo"
+                    model_name=request.model or "gpt-3.5-turbo",
+                    user_id=user_id,
+                    is_admin=is_admin
                 ):
                     if not chunk:  # 跳过空chunks
                         continue
@@ -390,8 +414,12 @@ async def send_message_stream(
                 
                 db.add(ai_message)
                 
-                # 更新会话信息
-                conversation.updated_at = datetime.utcnow()
+                # 重新获取会话对象并更新时间
+                conversation = db.query(ConversationModel).filter(
+                    ConversationModel.id == conversation_id
+                ).first()
+                if conversation:
+                    conversation.updated_at = datetime.utcnow()
                 
                 db.commit()
                 

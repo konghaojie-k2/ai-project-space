@@ -52,14 +52,20 @@ const projectStages = [
 
 export default function HomePage() {
   const router = useRouter()
-  const { user, loading } = useUserStore()
+  const { user, isLoading } = useUserStore()
   const [isLoaded, setIsLoaded] = useState(false)
+  
+  // 等待zustand持久化复水
+  const hasHydrated = (useUserStore as any).persist?.hasHydrated?.() ?? true
   
   useEffect(() => {
     setIsLoaded(true)
     
+    // 等待复水完成后再进行重定向判断
+    if (!hasHydrated || isLoading) return
+    
     // 如果用户已登录，根据权限重定向
-    if (!loading && user) {
+    if (user) {
       if (user.is_superuser) {
         // 管理员重定向到dashboard
         router.push('/dashboard')
@@ -68,7 +74,7 @@ export default function HomePage() {
         router.push('/workspace')
       }
     }
-  }, [user, loading, router])
+  }, [user, isLoading, hasHydrated, router])
 
   return (
     <div className={`min-h-screen transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}>
@@ -85,7 +91,7 @@ export default function HomePage() {
               AI加持的智能项目管理，让协作更高效
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center animate-slide-up animation-delay-400">
-              {!loading && !user ? (
+              {!isLoading && !user ? (
                 <>
                   <Link 
                     href="/login" 

@@ -138,8 +138,7 @@ async def register(
         user_create = UserCreate(
             username=register_data.username,
             email=register_data.email,
-            password=register_data.password,
-            full_name=register_data.full_name
+            password=register_data.password
         )
         
         user = auth_service.create_user(db, user_create)
@@ -156,7 +155,10 @@ async def register(
             detail=str(e)
         )
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         logger.error(f"注册失败: {str(e)}")
+        logger.error(f"详细错误信息: {error_details}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="注册过程中发生错误"

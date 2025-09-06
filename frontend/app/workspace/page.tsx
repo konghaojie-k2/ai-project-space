@@ -51,12 +51,8 @@ export default function WorkspacePage() {
       setLoadingFiles(true)
       const token = localStorage.getItem('auth-token')
       
-      const response = await fetch('http://localhost:8000/api/v1/files/', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      })
+      const { apiGet } = await import('@/lib/api');
+      const response = await apiGet('/api/v1/files/')
 
       if (response.ok) {
         const data = await response.json()

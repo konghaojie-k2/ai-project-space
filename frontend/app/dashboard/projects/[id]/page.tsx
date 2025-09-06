@@ -71,6 +71,10 @@ interface FileItem {
   createdAt?: string
   viewCount?: number
   downloadCount?: number
+  // 添加权限相关字段
+  accessLevel?: string // 访问级别
+  userId?: string // 文件所有者ID
+  uploaderId?: string // 上传者信息
 }
 
 // 移除所有模拟数据
@@ -305,7 +309,8 @@ const getStoredProjects = (): Record<string, Project> => {
 // 从后端API获取文件列表
 const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
   try {
-    const response = await fetch(`/api/v1/files?project_id=${projectId}`)
+    const { apiGet } = await import('@/lib/api');
+    const response = await apiGet(`/api/v1/files/?project_id=${projectId}`)
     if (response.ok) {
       const files = await response.json()
       return files.map((file: any) => ({
@@ -333,7 +338,11 @@ const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
         fileSize: file.file_size,
         createdAt: file.created_at,
         viewCount: file.view_count,
-        downloadCount: file.download_count
+        downloadCount: file.download_count,
+        // 添加权限相关字段
+        accessLevel: file.access_level || 'all_users', // 访问级别
+        userId: file.user_id, // 文件所有者ID
+        uploaderId: file.uploaded_by // 上传者信息
       }))
     } else {
       console.error('获取文件列表失败:', response.statusText)
@@ -391,7 +400,8 @@ const fetchProjectInfo = async (projectId: string): Promise<Project | null> => {
 
 const fetchProjectStats = async (projectId: string) => {
   try {
-    const response = await fetch(`/api/v1/files?project_id=${projectId}`)
+    const { apiGet } = await import('@/lib/api');
+    const response = await apiGet(`/api/v1/files/?project_id=${projectId}`)
     if (response.ok) {
       const files = await response.json()
       return {
@@ -709,15 +719,10 @@ export default function ProjectDetailPage() {
     }
 
     try {
-      const response = await fetch(`/api/v1/files/${editingFile.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          original_name: editName.trim(),
-          stage: editStage
-        }),
+      const { apiPut } = await import('@/lib/api');
+      const response = await apiPut(`/api/v1/files/${editingFile.id}`, {
+        original_name: editName.trim(),
+        stage: editStage
       });
 
       if (response.ok) {
@@ -742,7 +747,8 @@ export default function ProjectDetailPage() {
   const handleDownload = async (file: FileItem) => {
     try {
       // 调用后端下载API
-      const response = await fetch(`/api/v1/files/${file.id}/download`);
+      const { apiGet } = await import('@/lib/api');
+      const response = await apiGet(`/api/v1/files/${file.id}/download`);
       
       if (response.ok) {
         // 获取文件内容
@@ -778,12 +784,8 @@ export default function ProjectDetailPage() {
     const confirmed = window.confirm('确定要删除这个文件吗？此操作无法撤销。')
     if (confirmed) {
       try {
-        const response = await fetch(`/api/v1/files/${fileId}`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
+        const { apiDelete } = await import('@/lib/api');
+        const response = await apiDelete(`/api/v1/files/${fileId}`);
 
         if (response.ok) {
           // 静默删除，先更新UI状态
@@ -859,15 +861,10 @@ export default function ProjectDetailPage() {
     
     setIsIndexing(true)
     try {
-      const response = await fetch('/api/v1/files/batch-index', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          project_id: projectId,
-          force_reindex: false
-        })
+      const { apiPost } = await import('@/lib/api');
+      const response = await apiPost('/api/v1/files/batch-index', {
+        project_id: projectId,
+        force_reindex: false
       })
       
       if (response.ok) {

@@ -224,7 +224,9 @@ class AIService:
         file_id: str, 
         file_name: str,
         project_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        access_level: str = "all_users",
+        user_id: Optional[int] = None
     ) -> bool:
         """添加文档到向量数据库"""
         try:
@@ -245,7 +247,9 @@ class AIService:
                     "file_name": file_name,
                     "chunk_index": i,
                     "total_chunks": len(chunks),
-                    "project_id": project_id or "default"
+                    "project_id": project_id or "default",
+                    "access_level": access_level,  # 添加权限级别
+                    "user_id": str(user_id) if user_id else None  # 添加文件所有者
                 }
                 if metadata:
                     doc_metadata.update(metadata)
@@ -341,8 +345,10 @@ class AIService:
                 return []
             
             # 使用FAISS进行相似度搜索
+            # 获取更多结果以便权限过滤，确保最终能返回足够的结果
+            search_k = max(top_k * 3, 20)  # 至少搜索20个结果进行过滤
             docs_with_scores = self.vector_store.similarity_search_with_score(
-                query, k=top_k * 2  # 获取更多结果以便过滤
+                query, k=search_k
             )
             
             results = []
@@ -407,7 +413,9 @@ class AIService:
         messages: List[ChatMessage], 
         project_context: Optional[str] = None,
         stream: bool = False,
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None,
+        user_id: Optional[int] = None,
+        is_admin: bool = False
     ) -> ChatResponse:
         """聊天完成"""
         try:
@@ -458,7 +466,9 @@ class AIService:
         self, 
         messages: List[ChatMessage], 
         project_context: Optional[str] = None,
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None,
+        user_id: Optional[int] = None,
+        is_admin: bool = False
     ):
         """聊天完成 - 流式响应"""
         try:
@@ -466,8 +476,8 @@ class AIService:
             logger.info(f"🔥 消息类型: {[type(msg).__name__ for msg in messages]}")
             logger.info(f"🔥 前3条消息内容: {messages[:3] if len(messages) <= 3 else messages[:3]}")
             
-            # 🤖 智能上下文增强：搜索相关项目文档
-            enhanced_context = await self._build_enhanced_context(messages, project_context)
+            # 🤖 智能上下文增强：搜索相关项目文档（带权限过滤）
+            enhanced_context = await self._build_enhanced_context(messages, project_context, user_id, is_admin)
             
             # 构建系统提示
             system_prompt = self._build_system_prompt(enhanced_context)
@@ -588,7 +598,7 @@ class AIService:
                 import asyncio
                 await asyncio.sleep(0.1)
     
-    async def _build_enhanced_context(self, messages: List[ChatMessage], project_context: Optional[str] = None) -> str:
+    async def _build_enhanced_context(self, messages: List[ChatMessage], project_context: Optional[str] = None, user_id: Optional[int] = None, is_admin: bool = False) -> str:
         """构建增强上下文：基于用户消息搜索相关项目文档"""
         try:
             if not messages:
@@ -613,10 +623,12 @@ class AIService:
             # 从project_context中提取项目ID（如果有的话）
             project_id = project_context if project_context and project_context.startswith("project-") else None
             
-            # 搜索相关文档
+            # 搜索相关文档（带权限过滤）
             relevant_docs = await self.search_similar_documents(
                 query=query,
-                project_id=project_id
+                project_id=project_id,
+                user_id=user_id,
+                is_admin=is_admin
             )
             
             # 构建增强上下文

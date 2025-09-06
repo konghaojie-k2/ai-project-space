@@ -45,7 +45,7 @@ class Project(Base):
     allow_ai_chat: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     # 创建者
-    creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
+    creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     
     # 关联关系 - 暂时注释掉以避免循环导入问题
     # creator = relationship("User", back_populates="created_projects", foreign_keys=[creator_id])

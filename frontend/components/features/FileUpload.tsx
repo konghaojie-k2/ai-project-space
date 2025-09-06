@@ -146,11 +146,11 @@ export function FileUpload({
       formData.append('description', `上传文件: ${file.name}`)
       // 添加实际用户信息
       formData.append('uploaded_by', user?.name || '管理员')
+      // 添加权限控制：普通文件上传默认设置为全员可见
+      formData.append('access_level', 'all_users')
 
-      const response = await fetch('/api/v1/files/upload', {
-        method: 'POST',
-        body: formData
-      })
+      const { apiUpload } = await import('@/lib/api');
+      const response = await apiUpload('/api/v1/files/upload', formData)
 
       clearInterval(progressInterval)
 
@@ -216,17 +216,12 @@ export function FileUpload({
     try {
       console.log('开始处理文档嵌入...', fileId)
       
-      const response = await fetch('/api/v1/chat/documents/process', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          project_id: projectId,
-          file_paths: [filePath],
-          chunk_size: 1000,
-          chunk_overlap: 200
-        }),
+      const { apiPost } = await import('@/lib/api');
+      const response = await apiPost('/api/v1/chat/documents/process', {
+        project_id: projectId,
+        file_paths: [filePath],
+        chunk_size: 1000,
+        chunk_overlap: 200
       })
 
       if (response.ok) {

@@ -39,16 +39,11 @@ export default function TeamPage() {
         'Content-Type': 'application/json'
       };
 
-      // 直接使用fetch API调用
+      // 使用API工具调用
+      const { apiGet } = await import('@/lib/api');
       const [usersResponse, statsResponse] = await Promise.all([
-        fetch('http://localhost:8000/api/v1/auth/users', {
-          method: 'GET',
-          headers
-        }),
-        fetch('http://localhost:8000/api/v1/auth/users/stats/summary', {
-          method: 'GET',
-          headers
-        })
+        apiGet('/api/v1/auth/users'),
+        apiGet('/api/v1/auth/users/stats/summary')
       ]);
 
       if (!usersResponse.ok) {
@@ -93,12 +88,9 @@ export default function TeamPage() {
   const toggleAdminStatus = async (user: User) => {
     try {
       const token = localStorage.getItem('auth-token');
-      const response = await fetch(`http://localhost:8000/api/v1/auth/users/${user.id}/admin?is_superuser=${!user.is_superuser}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+      const { apiRequest } = await import('@/lib/api');
+      const response = await apiRequest(`/api/v1/auth/users/${user.id}/admin?is_superuser=${!user.is_superuser}`, {
+        method: 'PATCH'
       });
       
       if (!response.ok) {

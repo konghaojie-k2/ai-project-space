@@ -10,9 +10,17 @@ from sqlalchemy import and_, or_, func, desc
 from loguru import logger
 
 from app.models.file import FileRecord, FileVersion, FileShare, FileComment
-from app.schemas.file import FileCreate, FileUpdate, FileResponse, FileStatsResponse
+from app.schemas.file import FileCreate, FileUpdate, FileResponse, FileStatsResponse, FileAccessLevel
 from app.core.database import get_db
 from app.utils.file_utils import extract_text_from_pdf, extract_text_from_docx, extract_text_from_xlsx
+
+def _fix_access_level_enum(file_dict: dict) -> dict:
+    """确保access_level字段是有效的字符串值"""
+    access_level = file_dict.get('access_level')
+    if access_level not in ["all_users", "admins_only", "owner_only"]:
+        # 如果不是有效值，使用默认值
+        file_dict['access_level'] = "all_users"
+    return file_dict
 
 class FileService:
     """文件服务"""
@@ -74,7 +82,9 @@ class FileService:
                 logger.info(f"🔥 file_metadata是字典类型: {file_record.file_metadata}")
                 
             logger.info(f"🔥 开始创建FileResponse对象")
-            response = FileResponse.model_validate(file_record)
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            file_dict = file_record.to_dict()
+            response = FileResponse(**file_dict)
             logger.info(f"🔥 FileResponse对象创建成功: {response.id}")
             
             return response
@@ -112,7 +122,10 @@ class FileService:
             if not isinstance(file_record.file_metadata, dict):
                 file_record.file_metadata = {}
                 
-            return FileResponse.model_validate(file_record)
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            file_dict = file_record.to_dict()
+            file_dict = _fix_access_level_enum(file_dict)
+            return FileResponse(**file_dict)
             
         except Exception as e:
             logger.error(f"获取文件记录失败: {e}")
@@ -132,13 +145,10 @@ class FileService:
         获取用户的文件列表
         """
         try:
-            # 导入枚举
-            from app.models.file import FileAccessLevel
-            
             query = self.db.query(FileRecord).filter(
                 FileRecord.is_deleted == False,
                 or_(
-                    FileRecord.access_level == FileAccessLevel.ALL_USERS,  # 全员可见
+                    FileRecord.access_level == "all_users",  # 全员可见
                     FileRecord.user_id == user_id,  # 用户自己的文件
                     FileRecord.is_public == True     # 或者公开文件（向后兼容）
                 )
@@ -164,7 +174,15 @@ class FileService:
             offset = (page - 1) * size
             files = query.order_by(desc(FileRecord.created_at)).offset(offset).limit(size).all()
             
-            return [FileResponse.from_orm(file) for file in files]
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            result = []
+            for file_record in files:
+                if not isinstance(file_record.file_metadata, dict):
+                    file_record.file_metadata = {}
+                file_dict = file_record.to_dict()
+                file_dict = _fix_access_level_enum(file_dict)
+                result.append(FileResponse(**file_dict))
+            return result
             
         except Exception as e:
             logger.error(f"获取用户文件列表失败: {str(e)}")
@@ -184,15 +202,12 @@ class FileService:
             if not file_record:
                 return False
             
-            # 导入枚举
-            from app.models.file import FileAccessLevel
-            
-            # 根据访问级别判断权限
-            if file_record.access_level == FileAccessLevel.ALL_USERS:
+            # 根据访问级别判断权限（使用字符串比较）
+            if file_record.access_level == "all_users":
                 return True  # 全员可见
-            elif file_record.access_level == FileAccessLevel.ADMINS_ONLY:
+            elif file_record.access_level == "admins_only":
                 return is_admin  # 仅管理员
-            elif file_record.access_level == FileAccessLevel.OWNER_ONLY:
+            elif file_record.access_level == "owner_only":
                 return file_record.user_id == user_id  # 仅上传者
             
             # 向后兼容：如果没有设置access_level，使用原来的逻辑
@@ -254,12 +269,15 @@ class FileService:
             offset = (page - 1) * size
             files = query.order_by(desc(FileRecord.created_at)).offset(offset).limit(size).all()
             
-            # 确保每个文件的file_metadata是字典类型
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            result = []
             for file_record in files:
                 if not isinstance(file_record.file_metadata, dict):
                     file_record.file_metadata = {}
-            
-            return [FileResponse.model_validate(file) for file in files]
+                file_dict = file_record.to_dict()
+                file_dict = _fix_access_level_enum(file_dict)
+                result.append(FileResponse(**file_dict))
+            return result
             
         except Exception as e:
             logger.error(f"获取文件列表失败: {e}")
@@ -311,7 +329,10 @@ class FileService:
                 file_record.file_metadata = {}
             
             logger.info(f"文件记录更新成功: {file_id}")
-            return FileResponse.model_validate(file_record)
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            file_dict = file_record.to_dict()
+            file_dict = _fix_access_level_enum(file_dict)
+            return FileResponse(**file_dict)
             
         except Exception as e:
             self.db.rollback()
@@ -525,14 +546,25 @@ class FileService:
                 FileRecord.is_deleted == False
             ).order_by(desc(FileRecord.created_at)).limit(5).all()
             
-            recent_uploads = [FileResponse.model_validate(file) for file in recent_files]
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            recent_uploads = []
+            for file_record in recent_files:
+                if not isinstance(file_record.file_metadata, dict):
+                    file_record.file_metadata = {}
+                file_dict = file_record.to_dict()
+                recent_uploads.append(FileResponse(**file_dict))
             
             # 热门文件（按查看次数排序）
             popular_files = self.db.query(FileRecord).filter(
                 FileRecord.is_deleted == False
             ).order_by(desc(FileRecord.view_count)).limit(5).all()
             
-            popular_files_list = [FileResponse.model_validate(file) for file in popular_files]
+            popular_files_list = []
+            for file_record in popular_files:
+                if not isinstance(file_record.file_metadata, dict):
+                    file_record.file_metadata = {}
+                file_dict = file_record.to_dict()
+                popular_files_list.append(FileResponse(**file_dict))
             
             return FileStatsResponse(
                 total_files=total_files,
@@ -622,8 +654,16 @@ class FileService:
             offset = (page - 1) * size
             files = query_obj.offset(offset).limit(size).all()
             
+            # 使用to_dict方法来避免SQLAlchemy MetaData对象的问题
+            files_response = []
+            for file_record in files:
+                if not isinstance(file_record.file_metadata, dict):
+                    file_record.file_metadata = {}
+                file_dict = file_record.to_dict()
+                files_response.append(FileResponse(**file_dict))
+            
             return {
-                "files": [FileResponse.model_validate(file) for file in files],
+                "files": files_response,
                 "total": total,
                 "page": page,
                 "size": size,

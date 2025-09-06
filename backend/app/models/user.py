@@ -18,7 +18,7 @@ from app.models.base import Base
 class User(Base):
     """用户模型"""
     
-    __tablename__ = "user"
+    __tablename__ = "users"
     
     # 基本信息
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)

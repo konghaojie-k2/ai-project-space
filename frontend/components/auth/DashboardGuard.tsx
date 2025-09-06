@@ -14,11 +14,12 @@ interface DashboardGuardProps {
  */
 export default function DashboardGuard({ children }: DashboardGuardProps) {
   const router = useRouter()
-  const { user, loading } = useUserStore()
+  const { user, isLoading } = useUserStore()
+  const hasHydrated = (useUserStore as any).persist?.hasHydrated?.() ?? true
 
   useEffect(() => {
     // 等待用户状态加载完成
-    if (loading) return
+    if (!hasHydrated || isLoading) return
 
     // 未登录，跳转到登录页
     if (!user) {
@@ -31,10 +32,10 @@ export default function DashboardGuard({ children }: DashboardGuardProps) {
       router.replace('/unauthorized')
       return
     }
-  }, [user, loading, router])
+  }, [user, isLoading, hasHydrated, router])
 
   // 加载中显示
-  if (loading) {
+  if (!hasHydrated || isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">

@@ -1,4 +1,4 @@
-// import DashboardGuard from '@/components/auth/DashboardGuard'
+import DashboardGuard from '@/components/auth/DashboardGuard'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -6,12 +6,12 @@ interface DashboardLayoutProps {
 
 /**
  * Dashboard布局组件
- * 临时禁用权限保护进行测试
+ * 只允许管理员访问Dashboard页面
  */
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
-    <>
+    <DashboardGuard>
       {children}
-    </>
+    </DashboardGuard>
   )
 }

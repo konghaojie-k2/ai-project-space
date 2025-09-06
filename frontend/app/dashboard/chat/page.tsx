@@ -66,6 +66,9 @@ interface ProjectFile {
   stage: string;
   created_at: string;
   original_name: string;
+  access_level: string; // 添加权限级别字段
+  user_id: string; // 添加文件所有者字段
+  uploaded_by: string; // 添加上传者信息
 }
 
 // 暂存项数据类型
@@ -126,11 +129,31 @@ export default function ChatPage() {
   const [savingDraft, setSavingDraft] = useState<DraftItem | null>(null);
   const [saveFileName, setSaveFileName] = useState('');
   const [saveFileStage, setSaveFileStage] = useState('待分类');
+  const [saveAccessLevel, setSaveAccessLevel] = useState('all_users'); // 默认为所有人可见
   
   // 下拉菜单定位ref
   const projectSelectorRef = useRef<HTMLDivElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
   const [isClient, setIsClient] = useState(false);
+
+  // 根据用户权限过滤文件列表
+  const filterFilesByPermission = (files: ProjectFile[]): ProjectFile[] => {
+    if (!user) return []; // 未登录用户无法查看任何文件
+    
+    return files.filter(file => {
+      // 根据访问级别判断权限
+      switch (file.access_level) {
+        case 'all_users':
+          return true; // 全员可见
+        case 'admins_only':
+          return user.is_superuser; // 仅管理员可见
+        case 'owner_only':
+          return file.user_id === user.id; // 仅文件所有者可见
+        default:
+          return false; // 未知权限级别，默认不可见
+      }
+    });
+  };
 
   // 确保只在客户端渲染Portal
   useEffect(() => {
@@ -205,10 +228,13 @@ export default function ChatPage() {
 
     setIsLoadingFiles(true);
     try {
-      const response = await fetch(`/api/v1/files?project_id=${selectedProject.id}`);
+      const { apiGet } = await import('@/lib/api');
+      const response = await apiGet(`/api/v1/files/?project_id=${selectedProject.id}`);
       if (response.ok) {
         const files = await response.json();
-        setProjectFiles(files);
+        // 应用权限过滤
+        const filteredFiles = filterFilesByPermission(files);
+        setProjectFiles(filteredFiles);
       } else {
         console.error('加载项目文件失败:', response.statusText);
         setProjectFiles([]);
@@ -223,7 +249,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadProjectFiles();
-  }, [selectedProject?.id]);
+  }, [selectedProject?.id, user?.id]); // 当项目或用户变化时重新加载文件
 
   // 暂存AI回答
   const handleSaveToDraft = (message: Message) => {
@@ -315,11 +341,12 @@ export default function ChatPage() {
     if (!savingDraft || !saveFileName.trim()) return;
     
     try {
-      await handleSaveToProject(savingDraft, saveFileName.trim(), 'md', saveFileStage);
+      await handleSaveToProject(savingDraft, saveFileName.trim(), 'md', saveFileStage, saveAccessLevel);
       setShowSaveModal(false);
       setSavingDraft(null);
       setSaveFileName('');
       setSaveFileStage('待分类');
+      setSaveAccessLevel('all_users'); // 重置权限级别为默认值
       // 从暂存中移除已保存的项目
       setDrafts(prev => prev.filter(d => d.id !== savingDraft.id));
       // 刷新文件列表
@@ -332,7 +359,7 @@ export default function ChatPage() {
   };
 
   // 保存到项目文件
-  const handleSaveToProject = async (draftItem: DraftItem, fileName: string, fileType: string, stage: string) => {
+  const handleSaveToProject = async (draftItem: DraftItem, fileName: string, fileType: string, stage: string, accessLevel: string = 'all_users') => {
     try {
       // 创建文件内容
       const fileContent = new Blob([draftItem.content], { type: 'text/markdown' });
@@ -347,11 +374,12 @@ export default function ChatPage() {
       const uploaderInfo = `${actualModel} (${user?.name || '管理员'})`;
       formData.append('uploaded_by', uploaderInfo);
       formData.append('description', `${actualModel}生成的回答内容，由${user?.name || '管理员'}保存`);
+      
+      // 添加权限控制：使用用户选择的权限级别
+      formData.append('access_level', accessLevel);
 
-      const response = await fetch('/api/v1/files/upload', {
-        method: 'POST',
-        body: formData
-      });
+      const { apiUpload } = await import('@/lib/api');
+      const response = await apiUpload('/api/v1/files/upload', formData);
 
       if (response.ok) {
         const savedFile = await response.json();
@@ -374,7 +402,8 @@ export default function ChatPage() {
         setDrafts(prev => prev.filter(d => d.id !== draftItem.id));
         
         // 刷新项目文件列表
-        const updatedFilesResponse = await fetch(`/api/v1/files?project_id=${selectedProject?.id}`);
+        const { apiGet } = await import('@/lib/api');
+        const updatedFilesResponse = await apiGet(`/api/v1/files/?project_id=${selectedProject?.id}`);
         if (updatedFilesResponse.ok) {
           const updatedFiles = await updatedFilesResponse.json();
           setProjectFiles(updatedFiles);
@@ -705,7 +734,7 @@ export default function ChatPage() {
               <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-2" />
               加载对话中...
             </div>
-          ) : conversations.length === 0 ? (
+          ) : (conversations?.length || 0) === 0 ? (
             <div className="p-4 text-center text-gray-500">
               <ChatBubbleLeftRightIcon className="w-12 h-12 mx-auto mb-2 text-gray-300" />
               <p>还没有对话</p>
@@ -876,7 +905,7 @@ export default function ChatPage() {
                 )}
               >
                 <FolderIcon className="w-4 h-4" />
-                文件 ({projectFiles.length})
+                文件 ({projectFiles?.length || 0})
               </button>
               <button
                 onClick={() => setWorkspaceActiveTab('drafts')}
@@ -888,7 +917,7 @@ export default function ChatPage() {
                 )}
               >
                 <BookmarkIcon className="w-4 h-4" />
-                暂存 ({drafts.length})
+                暂存 ({drafts?.length || 0})
               </button>
               <button
                 onClick={() => setWorkspaceActiveTab('saved')}
@@ -900,7 +929,7 @@ export default function ChatPage() {
                 )}
               >
                 <ArchiveBoxIcon className="w-4 h-4" />
-                已保存 ({savedItems.length})
+                已保存 ({savedItems?.length || 0})
               </button>
             </div>
           </div>
@@ -915,7 +944,7 @@ export default function ChatPage() {
                     <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-2" />
                     <p className="text-sm text-gray-500">加载文件中...</p>
                   </div>
-                ) : projectFiles.length === 0 ? (
+                ) : (projectFiles?.length || 0) === 0 ? (
                   <div className="text-center py-8">
                     <FolderIcon className="w-12 h-12 mx-auto mb-2 text-gray-300" />
                     <p className="text-sm text-gray-500">暂无项目文件</p>
@@ -965,7 +994,7 @@ export default function ChatPage() {
             {/* 暂存区标签页 */}
             {workspaceActiveTab === 'drafts' && (
               <div className="p-4">
-                {drafts.length === 0 ? (
+                {(drafts?.length || 0) === 0 ? (
                   <div className="text-center py-8">
                     <BookmarkIcon className="w-12 h-12 mx-auto mb-2 text-gray-300" />
                     <p className="text-sm text-gray-500">暂存区为空</p>
@@ -1016,7 +1045,7 @@ export default function ChatPage() {
             {/* 已保存标签页 */}
             {workspaceActiveTab === 'saved' && (
               <div className="p-4">
-                {savedItems.length === 0 ? (
+                {(savedItems?.length || 0) === 0 ? (
                   <div className="text-center py-8">
                     <ArchiveBoxIcon className="w-12 h-12 mx-auto mb-2 text-gray-300" />
                     <p className="text-sm text-gray-500">暂无已保存内容</p>
@@ -1175,7 +1204,7 @@ export default function ChatPage() {
                     </button>
                   ))}
 
-                  {filteredProjects.length === 0 && projectSearchQuery && (
+                  {(filteredProjects?.length || 0) === 0 && projectSearchQuery && (
                     <div className="p-3 text-center text-gray-500 text-sm">
                       未找到匹配的项目
           </div>
@@ -1260,6 +1289,27 @@ export default function ChatPage() {
                   <option key={stage} value={stage}>{stage}</option>
                 ))}
               </select>
+            </div>
+
+            {/* 权限级别选择 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                访问权限
+              </label>
+              <select
+                value={saveAccessLevel}
+                onChange={(e) => setSaveAccessLevel(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all_users">所有人可见</option>
+                <option value="admins_only">仅管理员可见</option>
+                <option value="owner_only">仅我可见</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {saveAccessLevel === 'all_users' && '所有用户都可以查看此文件'}
+                {saveAccessLevel === 'admins_only' && '只有管理员可以查看此文件'}
+                {saveAccessLevel === 'owner_only' && '只有您可以查看此文件'}
+              </p>
             </div>
 
             {/* 按钮组 */}

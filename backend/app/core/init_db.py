@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 from app.core.database import engine, SessionLocal
 from app.models.file import FileRecord, FileVersion, FileShare, FileComment
 from app.models.chat import Conversation, ChatMessage
+from app.models.user import User
+from app.services.auth_service import AuthService
+from app.schemas.auth import UserCreate
 
 
 def init_db() -> None:
@@ -22,9 +25,58 @@ def init_db() -> None:
         
         logger.info("数据库表创建成功")
         
+        # 创建默认管理员账户
+        create_default_admin()
+        
     except Exception as e:
         logger.error(f"数据库初始化失败: {e}")
         raise
+
+
+def create_default_admin() -> None:
+    """创建默认管理员账户"""
+    try:
+        db = SessionLocal()
+        auth_service = AuthService()
+        
+        # 检查是否已有管理员账户
+        existing_admin = db.query(User).filter(User.is_superuser == True).first()
+        if existing_admin:
+            logger.info(f"管理员账户已存在: {existing_admin.username} ({existing_admin.email})")
+            return
+        
+        # 创建默认管理员账户
+        admin_data = UserCreate(
+            username="admin",
+            email="admin@example.com",
+            password="admin123456"  # 默认密码，建议首次登录后修改
+        )
+        
+        logger.info("正在创建默认管理员账户...")
+        
+        # 创建用户
+        admin_user = auth_service.create_user(db, admin_data)
+        
+        # 设置管理员权限和状态
+        admin_user.is_superuser = True
+        admin_user.is_active = True
+        admin_user.is_verified = True
+        admin_user.full_name = "系统管理员"
+        
+        db.commit()
+        
+        logger.info(f"✅ 默认管理员账户创建成功!")
+        logger.info(f"   用户名: {admin_user.username}")
+        logger.info(f"   邮箱: {admin_user.email}")
+        logger.info(f"   默认密码: admin123456")
+        logger.info("⚠️  安全提醒: 请尽快登录系统并修改默认密码!")
+        
+    except Exception as e:
+        logger.error(f"创建默认管理员账户失败: {e}")
+        db.rollback()
+        # 不抛出异常，避免影响数据库初始化
+    finally:
+        db.close()
 
 
 def create_sample_data() -> None:

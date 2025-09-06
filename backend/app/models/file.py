@@ -7,12 +7,6 @@ import enum
 
 from app.core.database import Base
 
-class FileAccessLevel(enum.Enum):
-    """文件访问级别枚举"""
-    ALL_USERS = "all_users"      # 全员可见
-    ADMINS_ONLY = "admins_only"  # 仅管理员
-    OWNER_ONLY = "owner_only"    # 仅上传者
-
 class FileRecord(Base):
     """文件记录模型"""
     __tablename__ = "files"
@@ -50,7 +44,7 @@ class FileRecord(Base):
     is_processed = Column(Boolean, default=False, comment="是否已处理")
     
     # 访问权限
-    access_level = Column(Enum(FileAccessLevel), default=FileAccessLevel.ALL_USERS, comment="访问级别")
+    access_level = Column(String, default="all_users", comment="访问级别")
     
     # 用户信息
     user_id = Column(Integer, comment="上传用户ID")
@@ -91,14 +85,16 @@ class FileRecord(Base):
             "is_public": self.is_public,
             "is_deleted": self.is_deleted,
             "is_processed": self.is_processed,
-            "access_level": self.access_level.value if self.access_level else "all_users",
+            "access_level": self.access_level or "all_users",
+            "user_id": self.user_id,  # 添加缺失的user_id字段
             "uploaded_by": self.uploaded_by,
             "updated_by": self.updated_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "version": self.version,
             "parent_id": self.parent_id,
-            "file_metadata": self.file_metadata
+            "file_metadata": self.file_metadata,
+            "project_id": self.project_id  # 添加缺失的project_id字段
         }
 
 class FileVersion(Base):

@@ -159,5 +159,54 @@
       "upload_time": "2025-09-03T20:26:42.382075",
       "content_length": 26444
     }
+  },
+  "8fb47ef1-0844-4d50-9862-697a574f5fbe": {
+    "file_name": "test_upload_file_new.txt",
+    "project_id": "string",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "8fb47ef1-0844-4d50-9862-697a574f5fbe",
+      "project_id": "string",
+      "file_name": "test_upload_file_new.txt",
+      "file_type": "text/plain",
+      "stage": "测试阶段",
+      "tags": [
+        "string"
+      ],
+      "upload_time": "2025-09-06T12:14:06.421953",
+      "content_length": 268
+    }
+  },
+  "5109ab02-744b-4dc7-9d81-a4334062b019": {
+    "file_name": "ai_content_test.txt",
+    "project_id": "string",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "5109ab02-744b-4dc7-9d81-a4334062b019",
+      "project_id": "string",
+      "file_name": "ai_content_test.txt",
+      "file_type": "text/plain",
+      "stage": "AI测试阶段",
+      "tags": [
+        "string"
+      ],
+      "upload_time": "2025-09-06T12:27:22.227335",
+      "content_length": 313
+    }
+  },
+  "dba76947-a94e-4d7b-af9d-b11ae934bdbf": {
+    "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+    "project_id": "1756472340229",
+    "chunks_count": 33,
+    "metadata": {
+      "file_id": "dba76947-a94e-4d7b-af9d-b11ae934bdbf",
+      "project_id": "1756472340229",
+      "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-09-06T15:10:02.257774",
+      "content_length": 26444
+    }
   }
 }

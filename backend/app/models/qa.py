@@ -33,7 +33,7 @@ class QASession(Base):
     
     # 关联信息
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # 是否已转为笔记
     is_saved_as_note = Column(Boolean, default=False, nullable=False)
@@ -76,7 +76,7 @@ class Note(Base):
     
     # 关联信息
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
-    author_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # 关联关系 - 暂时注释掉以避免循环导入问题
     # project = relationship("Project", back_populates="notes")
@@ -93,7 +93,7 @@ class NoteLike(Base):
     __tablename__ = "note_like"
     
     note_id = Column(Integer, ForeignKey("note.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # 关联关系 - 暂时注释掉以避免循环导入问题
     # note = relationship("Note")

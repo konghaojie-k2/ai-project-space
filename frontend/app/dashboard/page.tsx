@@ -40,7 +40,8 @@ interface DashboardStats {
 // 获取全局文件统计
 const fetchGlobalFileStats = async (): Promise<{ totalFiles: number; totalSize: number }> => {
   try {
-    const response = await fetch('/api/v1/files')
+    const { apiGet } = await import('@/lib/api');
+    const response = await apiGet('/api/v1/files/')
     if (response.ok) {
       const files = await response.json()
       return {
@@ -57,7 +58,8 @@ const fetchGlobalFileStats = async (): Promise<{ totalFiles: number; totalSize: 
 // 获取AI对话统计
 const fetchChatStats = async (): Promise<{ aiChats: number }> => {
   try {
-    const response = await fetch('/api/v1/chat/stats')
+    const { apiGet } = await import('@/lib/api');
+    const response = await apiGet('/api/v1/chat/stats')
     if (response.ok) {
       const stats = await response.json()
       console.log('AI对话统计数据:', stats)

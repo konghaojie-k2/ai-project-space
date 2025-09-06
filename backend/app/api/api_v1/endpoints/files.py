@@ -93,9 +93,6 @@ async def upload_files(
             # 创建文件记录
             app_logger.info(f"🔥 开始创建数据库记录")
             try:
-                # 导入访问级别枚举
-                from app.schemas.file import FileAccessLevel
-                
                 file_create = FileCreate(
                     original_name=file.filename,
                     stored_name=stored_filename,
@@ -108,7 +105,7 @@ async def upload_files(
                     description=description,
                     uploaded_by=current_user.username,
                     user_id=current_user.id,
-                    access_level=FileAccessLevel(access_level)  # 使用传入的访问级别
+                    access_level=access_level  # 直接使用字符串访问级别
                 )
                 app_logger.info(f"🔥 FileCreate对象创建成功: {file_create}")
                 
@@ -158,7 +155,9 @@ async def upload_files(
                                 file_id=file_record.id,
                                 file_name=file.filename,
                                 project_id=project_id,
-                                metadata=metadata
+                                metadata=metadata,
+                                access_level=access_level,
+                                user_id=current_user.id
                             )
                             
                             if success:
@@ -533,7 +532,9 @@ async def batch_index_files(
                         file_id=file_record.id,
                         file_name=file_record.original_name,
                         project_id=file_record.project_id,
-                        metadata=metadata
+                        metadata=metadata,
+                        access_level=file_record.access_level or "all_users",
+                        user_id=file_record.user_id
                     )
                     
                     if success:
@@ -568,7 +569,8 @@ async def batch_index_files(
 async def search_file_context(
     query: str,
     project_id: Optional[str] = None,
-    limit: int = 5
+    limit: int = 5,
+    current_user: User = Depends(get_current_user)
 ):
     """
     搜索文件上下文（用于AI问答）
@@ -582,10 +584,12 @@ async def search_file_context(
         from app.services.ai_service import AIService
         ai_service = AIService()
         
-        # 搜索相似文档
+        # 搜索相似文档（带权限过滤）
         results = await ai_service.search_similar_documents(
             query=query,
-            n_results=limit
+            top_k=limit,
+            user_id=current_user.id,
+            is_admin=current_user.is_superuser
         )
         
         # 过滤项目相关结果
