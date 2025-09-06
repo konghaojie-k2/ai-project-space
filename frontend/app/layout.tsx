@@ -3,6 +3,10 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import ToastProvider from '@/components/providers/ToastProvider'
 import { UserProvider } from '@/lib/contexts/UserContext'
+import UserStatusIndicator from '@/components/debug/UserStatusIndicator'
+import '@/lib/debug/auth-monitor' // 引入认证监控工具
+import '@/lib/debug/redirect-tracker' // 引入重定向追踪器
+import '@/lib/utils/auth-sync' // 引入认证状态同步工具
 
 // 配置Inter字体
 const inter = Inter({ subsets: ['latin'] })
@@ -47,6 +51,9 @@ export default function RootLayout({
           
           {/* Toast通知提供者 */}
           <ToastProvider />
+          
+          {/* 开发环境下显示用户状态指示器 */}
+          {process.env.NODE_ENV === 'development' && <UserStatusIndicator />}
         </UserProvider>
       </body>
     </html>

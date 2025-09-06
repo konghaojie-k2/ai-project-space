@@ -3,6 +3,7 @@
 """
 
 import secrets
+import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from passlib.context import CryptContext
@@ -25,6 +26,9 @@ class AuthService:
         self.algorithm = settings.ALGORITHM
         self.access_token_expire_minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES
         self.refresh_token_expire_days = settings.REFRESH_TOKEN_EXPIRE_DAYS
+        # 服务器启动时间戳，用于使重启后的旧token失效
+        self.server_start_time = int(time.time())
+        logger.info(f"🚀 AuthService初始化完成，服务器启动时间戳: {self.server_start_time}")
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """验证密码"""
@@ -42,7 +46,12 @@ class AuthService:
         else:
             expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
         
-        to_encode.update({"exp": expire, "type": "access"})
+        # 添加服务器启动时间戳，使重启后的旧token失效
+        to_encode.update({
+            "exp": expire, 
+            "type": "access",
+            "server_start": self.server_start_time
+        })
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
     
@@ -50,7 +59,12 @@ class AuthService:
         """创建刷新令牌"""
         to_encode = data.copy()
         expire = datetime.utcnow() + timedelta(days=self.refresh_token_expire_days)
-        to_encode.update({"exp": expire, "type": "refresh"})
+        # 刷新token也添加服务器启动时间戳
+        to_encode.update({
+            "exp": expire, 
+            "type": "refresh",
+            "server_start": self.server_start_time
+        })
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
     
@@ -60,6 +74,13 @@ class AuthService:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
             if payload.get("type") != token_type:
                 return None
+            
+            # 检查服务器启动时间戳，如果token是在服务器重启前签发的，则认为无效
+            token_server_start = payload.get("server_start")
+            if token_server_start and token_server_start < self.server_start_time:
+                logger.info(f"Token失效：服务器已重启 (token: {token_server_start}, current: {self.server_start_time})")
+                return None
+                
             return payload
         except JWTError:
             return None

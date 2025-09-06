@@ -21,6 +21,7 @@ import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { formatFileSize, cn } from '@/lib/utils'
 import { projectSync } from '@/lib/services/project-sync'
+import DashboardPageHeader from '@/components/layout/DashboardPageHeader'
 
 interface Project {
   id: string
@@ -211,32 +212,20 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      {/* 面包屑导航 */}
-      <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
-        <Link href="/dashboard" className="hover:text-gray-700 dark:hover:text-gray-300 flex items-center">
-          <HomeIcon className="h-4 w-4 mr-1" />
-          Dashboard
-        </Link>
-        <span>/</span>
-        <span className="text-gray-900 dark:text-white">项目管理</span>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      {/* 页面头部 */}
+      <DashboardPageHeader
+        title="项目管理"
+        description="管理您的AI项目，按项目组织文件和资源"
+        actions={
+          <Button onClick={() => setShowCreateModal(true)}>
+            <PlusIcon className="h-5 w-5 mr-2" />
+            新建项目
+          </Button>
+        }
+      />
 
-      {/* 页面标题 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            项目管理
-          </h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
-            管理您的AI项目，按项目组织文件和资源
-          </p>
-        </div>
-        <Button onClick={() => setShowCreateModal(true)}>
-          <PlusIcon className="h-5 w-5 mr-2" />
-          新建项目
-        </Button>
-      </div>
+      <div className="space-y-6 p-6">
 
       {/* 工具栏 */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
@@ -570,6 +559,7 @@ export default function ProjectsPage() {
           </div>
         </div>
       </Modal>
+      </div>
     </div>
   )
 } 

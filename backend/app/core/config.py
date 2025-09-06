@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # ========================================
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120  # 2小时，适合开发测试
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # ========================================
@@ -45,16 +45,23 @@ class Settings(BaseSettings):
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if v is None:
+            return []
         if isinstance(v, str):
-            if not v or v.strip() == "[]":
+            # 处理空字符串或只有空白字符的情况
+            v = v.strip()
+            if not v or v == "[]" or v == "":
                 return []
             if v.startswith("[") and v.endswith("]"):
                 # 处理JSON格式的字符串
                 import json
                 try:
-                    return json.loads(v)
-                except json.JSONDecodeError:
-                    return []
+                    result = json.loads(v)
+                    return result if isinstance(result, list) else []
+                except (json.JSONDecodeError, TypeError):
+                    # 如果JSON解析失败，尝试作为逗号分隔的字符串处理
+                    v = v.strip("[]")
+                    return [i.strip() for i in v.split(",") if i.strip()]
             return [i.strip() for i in v.split(",") if i.strip()]
         elif isinstance(v, list):
             return v

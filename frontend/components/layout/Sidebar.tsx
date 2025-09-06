@@ -84,7 +84,7 @@ const bottomNavigation = [
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user } = useUserStore()
   const pathname = usePathname()
-  const [expandedItems, setExpandedItems] = useState<string[]>(['项目管理'])
+  const [expandedItems, setExpandedItems] = useState<string[]>(['项目管理', '团队管理'])
 
   const toggleExpanded = (itemName: string) => {
     setExpandedItems(prev => 

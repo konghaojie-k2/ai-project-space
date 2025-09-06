@@ -18,6 +18,7 @@ def init_db() -> None:
         from app.models.chat import Conversation, ChatMessage
         from app.models.project import Project
         from app.models.qa import QASession, Note
+        from app.models.project_member import ProjectMember
         from app.models.user import User
         
         # 创建所有表

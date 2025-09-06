@@ -28,6 +28,7 @@ import Modal from '@/components/ui/Modal'
 import { FileUpload } from '@/components/features/FileUpload'
 import { FilePreview } from '@/components/features/FilePreview'
 import TagManager from '@/components/features/TagManager'
+import DashboardPageHeader from '@/components/layout/DashboardPageHeader'
 import { formatFileSize, cn } from '@/lib/utils'
 import { PROJECT_STAGES, getStageById, getStageColor as getProjectStageColor, getStageIcon } from '@/lib/constants/project-stages'
 import { PREDEFINED_TAGS, getTagById, getTagColor } from '@/lib/constants/file-tags'
@@ -287,22 +288,20 @@ export default function FilesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* 页面标题 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            文件管理
-          </h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
-            管理项目文件，支持多种格式预览和组织
-          </p>
-        </div>
-        <Button onClick={() => setShowUploadModal(true)}>
-          <CloudArrowUpIcon className="h-5 w-5 mr-2" />
-          上传文件
-        </Button>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      {/* 页面头部 */}
+      <DashboardPageHeader
+        title="文件管理"
+        description="管理项目文件，支持多种格式预览和组织"
+        actions={
+          <Button onClick={() => setShowUploadModal(true)}>
+            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
+            上传文件
+          </Button>
+        }
+      />
+
+      <div className="space-y-6 p-6">
 
       {/* 工具栏 */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
@@ -690,6 +689,7 @@ export default function FilesPage() {
           onClose={() => setShowTagManager(false)}
         />
       )}
+      </div>
     </div>
   )
 } 

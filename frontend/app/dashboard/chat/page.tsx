@@ -226,6 +226,12 @@ export default function ChatPage() {
       return;
     }
 
+    if (isLoadingFiles) {
+      console.log('⏳ 项目文件正在加载中，跳过重复请求');
+      return;
+    }
+
+    console.log('📁 开始加载项目文件:', { projectId: selectedProject.id });
     setIsLoadingFiles(true);
     try {
       const { apiGet } = await import('@/lib/api');
@@ -234,13 +240,14 @@ export default function ChatPage() {
         const files = await response.json();
         // 应用权限过滤
         const filteredFiles = filterFilesByPermission(files);
+        console.log('✅ 项目文件加载成功:', { fileCount: filteredFiles.length });
         setProjectFiles(filteredFiles);
       } else {
-        console.error('加载项目文件失败:', response.statusText);
+        console.warn('⚠️ 加载项目文件失败:', response.statusText);
         setProjectFiles([]);
       }
     } catch (error) {
-      console.error('加载项目文件出错:', error);
+      console.error('❌ 加载项目文件出错:', error);
       setProjectFiles([]);
     } finally {
       setIsLoadingFiles(false);

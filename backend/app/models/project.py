@@ -1,29 +1,31 @@
-from sqlalchemy import Boolean, String, Text, Integer, ForeignKey, Enum
+"""
+项目模型
+"""
+
+from sqlalchemy import String, Boolean, Integer, ForeignKey, DateTime, func
 from sqlalchemy.orm import relationship, Mapped, mapped_column
-from typing import Optional, List
+from datetime import datetime
 import enum
 
 from app.models.base import Base
-# from app.models.user import user_project_association  # 暂时注释掉
-
-
-class ProjectStage(str, enum.Enum):
-    """项目阶段枚举"""
-    PRE_SALES = "售前"
-    BUSINESS_RESEARCH = "业务调研"
-    DATA_UNDERSTANDING = "数据理解"
-    DATA_EXPLORATION = "数据探索"
-    ENGINEERING_DEVELOPMENT = "工程开发"
-    IMPLEMENTATION_DEPLOYMENT = "实施部署"
 
 
 class ProjectStatus(str, enum.Enum):
     """项目状态枚举"""
-    DRAFT = "draft"        # 草稿
-    ACTIVE = "active"      # 进行中
+    ACTIVE = "active"        # 活跃
+    INACTIVE = "inactive"    # 非活跃
     COMPLETED = "completed"  # 已完成
-    ARCHIVED = "archived"   # 已归档
-    SUSPENDED = "suspended" # 暂停
+    ARCHIVED = "archived"    # 已归档
+
+
+class ProjectStage(str, enum.Enum):
+    """项目阶段枚举"""
+    PRESALE = "售前"
+    RESEARCH = "业务调研"
+    UNDERSTANDING = "数据理解"
+    EXPLORATION = "数据探索"
+    DEVELOPMENT = "工程开发"
+    DEPLOYMENT = "实施部署"
 
 
 class Project(Base):
@@ -32,14 +34,14 @@ class Project(Base):
     __tablename__ = "project"
     
     # 基本信息
-    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=True)
     
-    # 项目状态
-    status: Mapped[ProjectStatus] = mapped_column(Enum(ProjectStatus), default=ProjectStatus.DRAFT, nullable=False)
-    current_stage: Mapped[ProjectStage] = mapped_column(Enum(ProjectStage), default=ProjectStage.PRE_SALES, nullable=False)
+    # 状态信息
+    status: Mapped[ProjectStatus] = mapped_column(String(20), default=ProjectStatus.ACTIVE, nullable=False)
+    current_stage: Mapped[ProjectStage] = mapped_column(String(25), default=ProjectStage.PRESALE, nullable=False)
     
-    # 项目设置
+    # 权限设置
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     allow_file_upload: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_ai_chat: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -47,32 +49,21 @@ class Project(Base):
     # 创建者
     creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     
-    # 关联关系 - 暂时注释掉以避免循环导入问题
-    # creator = relationship("User", back_populates="created_projects", foreign_keys=[creator_id])
-    
-    # members = relationship(
-    #     "User",
-    #     secondary=user_project_association,
-    #     back_populates="projects"
-    # )
-    
-    # files = relationship(
-    #     "ProjectFile",
-    #     back_populates="project",
-    #     cascade="all, delete-orphan"
-    # )
-    
-    # qa_sessions = relationship(
-    #     "QASession",
-    #     back_populates="project",
-    #     cascade="all, delete-orphan"
-    # )
-    
-    # notes = relationship(
-    #     "Note",
-    #     back_populates="project",
-    #     cascade="all, delete-orphan"
-    # )
-    
     def __repr__(self) -> str:
-        return f"<Project(id={self.id}, name='{self.name}', status='{self.status}')>" 
+        return f"<Project(id={self.id}, name={self.name}, status={self.status})>"
+    
+    def to_dict(self):
+        """转换为字典"""
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.value if isinstance(self.status, ProjectStatus) else self.status,
+            "stage": self.current_stage.value if isinstance(self.current_stage, ProjectStage) else self.current_stage,
+            "is_public": self.is_public,
+            "allow_file_upload": self.allow_file_upload,
+            "allow_ai_chat": self.allow_ai_chat,
+            "creator_id": self.creator_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }

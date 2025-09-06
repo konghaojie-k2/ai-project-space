@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useUserStore } from '@/lib/stores/userStore'
 import { 
   ArrowRightIcon,
   CloudArrowUpIcon,
@@ -51,30 +49,14 @@ const projectStages = [
 ]
 
 export default function HomePage() {
-  const router = useRouter()
-  const { user, isLoading } = useUserStore()
   const [isLoaded, setIsLoaded] = useState(false)
-  
-  // 等待zustand持久化复水
-  const hasHydrated = (useUserStore as any).persist?.hasHydrated?.() ?? true
   
   useEffect(() => {
     setIsLoaded(true)
     
-    // 等待复水完成后再进行重定向判断
-    if (!hasHydrated || isLoading) return
-    
-    // 如果用户已登录，根据权限重定向
-    if (user) {
-      if (user.is_superuser) {
-        // 管理员重定向到dashboard
-        router.push('/dashboard')
-      } else {
-        // 普通用户重定向到工作空间
-        router.push('/workspace')
-      }
-    }
-  }, [user, isLoading, hasHydrated, router])
+    console.log('🏠 HomePage: 页面加载完成');
+    console.log('👤 HomePage: 保持在首页，用户可以选择登录或进入工作区');
+  }, [])
 
   return (
     <div className={`min-h-screen transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}>
@@ -91,90 +73,68 @@ export default function HomePage() {
               AI加持的智能项目管理，让协作更高效
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center animate-slide-up animation-delay-400">
-              {!isLoading && !user ? (
-                <>
-                  <Link 
-                    href="/login" 
-                    className="btn btn-primary bg-white text-primary-700 hover:bg-primary-50 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300 transform hover:scale-105"
-                  >
-                    立即登录
-                    <ArrowRightIcon className="w-5 h-5 ml-2 inline" />
-                  </Link>
-                  <Link 
-                    href="/register" 
-                    className="btn border-2 border-white text-white hover:bg-white hover:text-primary-700 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300"
-                  >
-                    注册账户
-                  </Link>
-                </>
-              ) : (
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto"></div>
-                  <p className="mt-2 text-primary-100">正在重定向...</p>
-                </div>
-              )}
+              {/* 简化的登录选项 - 不依赖用户状态 */}
+              <Link 
+                href="/login" 
+                className="btn btn-primary bg-white text-primary-700 hover:bg-primary-50 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300 transform hover:scale-105"
+              >
+                立即登录
+                <ArrowRightIcon className="w-5 h-5 ml-2 inline" />
+              </Link>
+              <Link 
+                href="/register" 
+                className="btn border-2 border-white text-white hover:bg-white hover:text-primary-700 px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-300"
+              >
+                免费注册
+              </Link>
             </div>
           </div>
         </div>
       </section>
 
-
-
-      {/* Features Section */}
-      <section className="py-20 bg-secondary-50">
+      {/* 功能特性 */}
+      <section className="py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-secondary-900 mb-4">
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
               🎯 核心特性
             </h2>
-            <p className="text-xl text-secondary-600 max-w-3xl mx-auto">
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
               集成最新AI技术，为项目管理提供智能化解决方案
             </p>
           </div>
-          
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
             {features.map((feature, index) => (
-              <div 
-                key={index}
-                className="card hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 animate-scale-in"
-                style={{ animationDelay: `${index * 100}ms` }}
-              >
-                <feature.icon className={`w-12 h-12 ${feature.color} mb-4`} />
-                <h3 className="text-xl font-semibold mb-3 text-secondary-900">
-                  {feature.title}
-                </h3>
-                <p className="text-secondary-600 leading-relaxed">
-                  {feature.description}
-                </p>
+              <div key={index} className="text-center p-6 rounded-xl hover:shadow-lg transition-shadow duration-300">
+                <div className={`w-16 h-16 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center`}>
+                  <feature.icon className={`w-8 h-8 ${feature.color}`} />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">{feature.title}</h3>
+                <p className="text-gray-600">{feature.description}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Project Stages Section */}
-      <section className="py-20 bg-white">
+      {/* 项目阶段管理 */}
+      <section className="py-20 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-secondary-900 mb-4">
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
               📋 项目阶段管理
             </h2>
-            <p className="text-xl text-secondary-600 max-w-3xl mx-auto">
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
               按阶段组织项目内容，让管理更有序
             </p>
           </div>
-          
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {projectStages.map((stage, index) => (
-              <div 
-                key={index}
-                className="bg-gradient-to-br from-primary-50 to-primary-100 p-4 rounded-lg text-center border border-primary-200 hover:shadow-md transition-all duration-300 animate-fade-in"
-                style={{ animationDelay: `${index * 150}ms` }}
-              >
-                <CheckCircleIcon className="w-8 h-8 text-primary-600 mx-auto mb-2" />
-                <div className="text-sm font-medium text-primary-800">
-                  {stage}
+              <div key={index} className="text-center p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300">
+                <div className="w-12 h-12 mx-auto mb-3 bg-primary-100 rounded-full flex items-center justify-center">
+                  <CheckCircleIcon className="w-6 h-6 text-primary-600" />
                 </div>
+                <span className="text-sm font-medium text-gray-900">{stage}</span>
               </div>
             ))}
           </div>
@@ -182,51 +142,47 @@ export default function HomePage() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-primary-600 to-primary-700 text-white">
+      <section className="py-20 bg-primary-600">
         <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl md:text-4xl font-bold mb-6">
+          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
             准备开始您的智能项目管理之旅？
           </h2>
-          <p className="text-xl mb-8 text-primary-100">
+          <p className="text-xl text-primary-100 mb-8">
             立即体验AI加持的项目管理系统，提升团队协作效率
           </p>
-          <Link 
-            href="/register" 
-            className="btn bg-white text-primary-700 hover:bg-primary-50 px-8 py-4 text-lg font-semibold rounded-lg transition-all duration-300 transform hover:scale-105 inline-flex items-center"
+          <Link
+            href="/register"
+            className="inline-flex items-center px-8 py-4 bg-white text-primary-700 font-semibold rounded-lg hover:bg-primary-50 transition-colors shadow-lg hover:shadow-xl transform hover:-translate-y-1 duration-300"
           >
             免费注册
-            <ArrowRightIcon className="w-5 h-5 ml-2" />
+            <ArrowRightIcon className="ml-2 w-5 h-5" />
           </Link>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-secondary-900 text-white py-12">
+      <footer className="bg-gray-900 text-white py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div className="col-span-1 md:col-span-2">
-              <h3 className="text-2xl font-bold mb-4">AI项目管理系统</h3>
-              <p className="text-secondary-300 mb-4">
-                让项目管理更智能，让协作更高效
-              </p>
-              <p className="text-secondary-400 text-sm">
-                © 2024 AI项目管理系统. 保留所有权利.
-              </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4">AI项目管理系统</h3>
+              <p className="text-gray-400 mb-4">让项目管理更智能，让协作更高效</p>
+              <p className="text-sm text-gray-500">© 2024 AI项目管理系统. 保留所有权利.</p>
             </div>
             <div>
-              <h4 className="text-lg font-semibold mb-4">产品</h4>
-              <ul className="space-y-2 text-secondary-300">
-                <li><Link href="/features" className="hover:text-white transition-colors">功能特性</Link></li>
-                <li><Link href="/pricing" className="hover:text-white transition-colors">价格方案</Link></li>
-                <li><Link href="/demo" className="hover:text-white transition-colors">产品演示</Link></li>
+              <h4 className="text-md font-semibold mb-4">产品</h4>
+              <ul className="space-y-2">
+                <li><Link href="/features" className="text-gray-400 hover:text-white transition-colors">功能特性</Link></li>
+                <li><Link href="/pricing" className="text-gray-400 hover:text-white transition-colors">价格方案</Link></li>
+                <li><Link href="/demo" className="text-gray-400 hover:text-white transition-colors">产品演示</Link></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-lg font-semibold mb-4">支持</h4>
-              <ul className="space-y-2 text-secondary-300">
-                <li><Link href="/docs" className="hover:text-white transition-colors">使用文档</Link></li>
-                <li><Link href="/help" className="hover:text-white transition-colors">帮助中心</Link></li>
-                <li><Link href="/contact" className="hover:text-white transition-colors">联系我们</Link></li>
+              <h4 className="text-md font-semibold mb-4">支持</h4>
+              <ul className="space-y-2">
+                <li><Link href="/docs" className="text-gray-400 hover:text-white transition-colors">使用文档</Link></li>
+                <li><Link href="/help" className="text-gray-400 hover:text-white transition-colors">帮助中心</Link></li>
+                <li><Link href="/contact" className="text-gray-400 hover:text-white transition-colors">联系我们</Link></li>
               </ul>
             </div>
           </div>
@@ -234,4 +190,4 @@ export default function HomePage() {
       </footer>
     </div>
   )
-} 
+}

@@ -39,6 +39,7 @@ import TagManager from '@/components/features/TagManager'
 import { formatFileSize, cn } from '@/lib/utils'
 import { PROJECT_STAGES } from '@/lib/constants/project-stages'
 import { projectSync } from '@/lib/services/project-sync'
+import ProjectMembersTooltip from '@/components/features/ProjectMembersTooltip'
 
 interface Project {
   id: string
@@ -453,9 +454,20 @@ export default function ProjectDetailPage() {
   const [isIndexing, setIsIndexing] = useState(false)
   const [indexStats, setIndexStats] = useState({ indexed: 0, total: 0 })
 
+  // 设置客户端水合状态
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
+
   // 客户端水合完成后再加载数据
   useEffect(() => {
+    if (!isHydrated) {
+      console.log('⏳ 等待客户端水合完成...');
+      return;
+    }
+
     const loadData = async () => {
+      console.log('📁 开始加载项目详情数据:', { projectId });
       setIsLoading(true)
       
       // 从同步服务获取项目信息
@@ -471,6 +483,11 @@ export default function ProjectDetailPage() {
           fetchProjectStats(projectId)
         ])
         
+        console.log('✅ 项目数据加载成功:', { 
+          fileCount: apiFiles.length, 
+          stats 
+        });
+        
         setFiles(apiFiles)
         setFilteredFiles(apiFiles)
         setProjectStats(stats)
@@ -482,13 +499,12 @@ export default function ProjectDetailPage() {
         await projectSync.updateProjectFileStats(projectId)
         
       } catch (error) {
-        console.error('加载数据失败:', error)
+        console.error('❌ 加载项目数据失败:', error)
         // 如果API失败，显示空状态
         setFiles([])
         setFilteredFiles([])
         setProjectStats({ fileCount: 0, totalSize: 0 })
       } finally {
-        setIsHydrated(true)
         setIsLoading(false)
       }
     }
@@ -504,7 +520,7 @@ export default function ProjectDetailPage() {
     })
     
     return unsubscribe
-  }, [projectId])
+  }, [projectId, isHydrated]) // 添加isHydrated依赖，确保水合完成后重新执行
 
   // 当项目数据更新时，更新当前项目
   useEffect(() => {
@@ -963,10 +979,11 @@ export default function ProjectDetailPage() {
                   <CalendarIcon className="h-4 w-4" />
                   <span>当前阶段: {project?.stage}</span>
                 </div>
-                <div className="flex items-center space-x-1">
-                  <UserGroupIcon className="h-4 w-4" />
-                  <span>{project?.memberCount} 名成员</span>
-                </div>
+                <ProjectMembersTooltip 
+                  projectId={projectId} 
+                  memberCount={project?.memberCount || 0}
+                  className="flex items-center space-x-1"
+                />
                 <div className="flex items-center space-x-1">
                   <FolderIcon className="h-4 w-4" />
                   <span>{projectStats.fileCount} 个文件</span>
