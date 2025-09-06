@@ -7,8 +7,9 @@ import { useUserStore } from '@/lib/stores/userStore'
 
 interface FileUploadProps {
   onUploadSuccess?: (files: any[]) => void
+  onUpload?: (files: any[]) => void  // 兼容原FileUpload接口
   projectId?: string
-  stage: string
+  stage?: string
 }
 
 interface FileWithPermissions extends File {
@@ -23,7 +24,8 @@ interface FileWithPermissions extends File {
  */
 export default function FileUploadWithPermissions({ 
   onUploadSuccess, 
-  projectId,
+  onUpload,
+  projectId = 'default',
   stage = 'data-understanding'
 }: FileUploadProps) {
   const { user } = useUserStore()
@@ -139,6 +141,7 @@ export default function FileUploadWithPermissions({
       setFiles([])
       setUploadProgress({})
       onUploadSuccess?.(uploadedFiles)
+      onUpload?.(uploadedFiles)  // 兼容原FileUpload接口
       
     } catch (error) {
       console.error('文件上传失败:', error)

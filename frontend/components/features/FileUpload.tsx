@@ -30,6 +30,7 @@ interface UploadFile {
   progress?: number
   status?: 'pending' | 'uploading' | 'success' | 'error'
   error?: string
+  accessLevel?: string  // 添加权限级别
 }
 
 export function FileUpload({
@@ -58,6 +59,14 @@ export function FileUpload({
   const { user } = useUser()
   const [uploadedFiles, setUploadedFiles] = useState<UploadFile[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
+  const [defaultAccessLevel, setDefaultAccessLevel] = useState('all_users') // 默认权限级别
+
+  // 访问级别选项
+  const accessLevelOptions = [
+    { value: 'all_users', label: '🌍 全员可见', description: '所有团队成员都可以查看' },
+    { value: 'admins_only', label: '👑 仅管理员', description: '只有管理员可以查看' },
+    { value: 'owner_only', label: '🔒 仅自己', description: '只有上传者可以查看' }
+  ]
   const [isUploading, setIsUploading] = useState(false)
   const [embeddingStatus, setEmbeddingStatus] = useState<Record<string, 'pending' | 'processing' | 'success' | 'failed'>>({})
 
@@ -90,7 +99,8 @@ export function FileUpload({
       size: file.size,
       type: file.type,
       progress: 0,
-      status: 'pending' as const
+      status: 'pending' as const,
+      accessLevel: defaultAccessLevel // 设置默认权限级别
     }))
 
     setUploadedFiles(prev => [...prev, ...newFiles])
@@ -146,8 +156,8 @@ export function FileUpload({
       formData.append('description', `上传文件: ${file.name}`)
       // 添加实际用户信息
       formData.append('uploaded_by', user?.name || '管理员')
-      // 添加权限控制：普通文件上传默认设置为全员可见
-      formData.append('access_level', 'all_users')
+      // 添加权限控制：使用文件的权限级别
+      formData.append('access_level', file.accessLevel || 'all_users')
 
       const { apiUpload } = await import('@/lib/api');
       const response = await apiUpload('/api/v1/files/upload', formData)
@@ -359,6 +369,29 @@ export function FileUpload({
         </div>
       </div>
 
+      {/* 默认权限设置 */}
+      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <div>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            📋 默认访问权限
+          </label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            新上传的文件将使用此权限设置
+          </p>
+        </div>
+        <select
+          value={defaultAccessLevel}
+          onChange={(e) => setDefaultAccessLevel(e.target.value)}
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm"
+        >
+          {accessLevelOptions.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {/* 文件列表 */}
       {uploadedFiles.length > 0 && (
         <div className="space-y-3">
@@ -389,6 +422,36 @@ export function FileUpload({
                       <p className="text-xs text-gray-500 dark:text-gray-400">
                         {formatFileSize(file.size)}
                       </p>
+                      
+                      {/* 权限选择 */}
+                      {file.status === 'pending' && (
+                        <select
+                          value={file.accessLevel || 'all_users'}
+                          onChange={(e) => {
+                            setUploadedFiles(prev => 
+                              prev.map(f => 
+                                f.id === file.id 
+                                  ? { ...f, accessLevel: e.target.value }
+                                  : f
+                              )
+                            )
+                          }}
+                          className="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+                        >
+                          {accessLevelOptions.map(option => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      
+                      {/* 显示已选择的权限 */}
+                      {file.status !== 'pending' && (
+                        <span className="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded">
+                          {accessLevelOptions.find(opt => opt.value === file.accessLevel)?.label || '🌍 全员可见'}
+                        </span>
+                      )}
                       
                       {file.status === 'uploading' && (
                         <div className="flex items-center space-x-2">

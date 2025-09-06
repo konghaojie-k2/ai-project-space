@@ -368,6 +368,14 @@ export default function ChatPage() {
   // 保存到项目文件
   const handleSaveToProject = async (draftItem: DraftItem, fileName: string, fileType: string, stage: string, accessLevel: string = 'all_users') => {
     try {
+      console.log('💾 开始保存AI生成文件:', {
+        fileName,
+        projectId: selectedProject?.id,
+        projectName: selectedProject?.name,
+        stage,
+        accessLevel
+      });
+
       // 创建文件内容
       const fileContent = new Blob([draftItem.content], { type: 'text/markdown' });
       const formData = new FormData();
@@ -390,6 +398,10 @@ export default function ChatPage() {
 
       if (response.ok) {
         const savedFile = await response.json();
+        console.log('✅ AI文件保存成功:', {
+          savedFile,
+          fileCount: Array.isArray(savedFile) ? savedFile.length : 1
+        });
         
         // 添加到已保存列表
         const savedItem: SavedItem = {
@@ -408,13 +420,10 @@ export default function ChatPage() {
         // 从暂存区移除
         setDrafts(prev => prev.filter(d => d.id !== draftItem.id));
         
-        // 刷新项目文件列表
-        const { apiGet } = await import('@/lib/api');
-        const updatedFilesResponse = await apiGet(`/api/v1/files/?project_id=${selectedProject?.id}`);
-        if (updatedFilesResponse.ok) {
-          const updatedFiles = await updatedFilesResponse.json();
-          setProjectFiles(updatedFiles);
-        }
+        // 强制刷新项目文件列表
+        console.log('🔄 AI保存文件成功，强制刷新文件列表');
+        setIsLoadingFiles(false); // 重置加载状态，确保可以刷新
+        await loadProjectFiles();
         
         // 更新项目文件计数
         if (selectedProject) {

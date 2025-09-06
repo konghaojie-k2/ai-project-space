@@ -38,6 +38,7 @@ async def upload_files(
     tags: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     access_level: str = Form("all_users"),  # 访问级别，默认全员
+    uploaded_by: Optional[str] = Form(None),  # 添加上传者参数
     current_user: User = Depends(get_current_user),
     file_service: FileService = Depends(get_file_service),
     storage_service: LocalFileService = Depends(get_storage_service)
@@ -103,7 +104,7 @@ async def upload_files(
                     stage=stage,
                     tags=tags_list,
                     description=description,
-                    uploaded_by=current_user.username,
+                    uploaded_by=uploaded_by or current_user.username,  # 使用传递的上传者信息或默认用户名
                     user_id=current_user.id,
                     access_level=access_level  # 直接使用字符串访问级别
                 )

@@ -208,5 +208,80 @@
       "upload_time": "2025-09-06T15:10:02.257774",
       "content_length": 26444
     }
+  },
+  "40f2d7e1-bb1c-44d3-8ab4-f4eb2ead8698": {
+    "file_name": "一当前可提供的专业支持.md",
+    "project_id": "1756472340229",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "40f2d7e1-bb1c-44d3-8ab4-f4eb2ead8698",
+      "project_id": "1756472340229",
+      "file_name": "一当前可提供的专业支持.md",
+      "file_type": "text/markdown",
+      "stage": "待分类",
+      "tags": [],
+      "upload_time": "2025-09-06T22:43:06.152979",
+      "content_length": 577
+    }
+  },
+  "d31bcf77-30b8-4ce9-beaa-a4965b9840b1": {
+    "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+    "project_id": "1756472340229",
+    "chunks_count": 33,
+    "metadata": {
+      "file_id": "d31bcf77-30b8-4ce9-beaa-a4965b9840b1",
+      "project_id": "1756472340229",
+      "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-09-06T22:56:07.437248",
+      "content_length": 26444
+    }
+  },
+  "9eb33f4c-38aa-4cce-a670-f2916b896c1e": {
+    "file_name": "一文档定位分析.md",
+    "project_id": "1756472340229",
+    "chunks_count": 2,
+    "metadata": {
+      "file_id": "9eb33f4c-38aa-4cce-a670-f2916b896c1e",
+      "project_id": "1756472340229",
+      "file_name": "一文档定位分析.md",
+      "file_type": "text/markdown",
+      "stage": "数据理解",
+      "tags": [],
+      "upload_time": "2025-09-06T23:00:08.214423",
+      "content_length": 1121
+    }
+  },
+  "0585e69b-775d-4bda-8603-ed8046972e9c": {
+    "file_name": "半导体及泛半导体产业技术术语层级字典内容总结.md",
+    "project_id": "1756472340229",
+    "chunks_count": 1,
+    "metadata": {
+      "file_id": "0585e69b-775d-4bda-8603-ed8046972e9c",
+      "project_id": "1756472340229",
+      "file_name": "半导体及泛半导体产业技术术语层级字典内容总结.md",
+      "file_type": "text/markdown",
+      "stage": "数据理解",
+      "tags": [],
+      "upload_time": "2025-09-06T23:05:16.974465",
+      "content_length": 839
+    }
+  },
+  "6c98b750-8513-4365-a629-11f71fa41886": {
+    "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+    "project_id": "1756472340229",
+    "chunks_count": 33,
+    "metadata": {
+      "file_id": "6c98b750-8513-4365-a629-11f71fa41886",
+      "project_id": "1756472340229",
+      "file_name": "半导体及泛半导体产业技术术语层级字典.pdf",
+      "file_type": "application/pdf",
+      "stage": "draft",
+      "tags": [],
+      "upload_time": "2025-09-06T23:10:17.928416",
+      "content_length": 26444
+    }
   }
 }
