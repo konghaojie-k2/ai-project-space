@@ -33,21 +33,21 @@ try {
 # 等待端口释放
 Start-Sleep -Seconds 2
 
-# 检查端口8000是否被占用
-$port8000 = netstat -ano | findstr ":8000.*LISTENING"
-if ($port8000) {
-    Write-Host "⚠️  端口8000仍被占用: $port8000" -ForegroundColor Yellow
+# 检查端口8001是否被占用
+$port8001 = netstat -ano | findstr ":8001.*LISTENING"
+if ($port8001) {
+    Write-Host "⚠️  端口8001仍被占用: $port8001" -ForegroundColor Yellow
 }
 
 # 启动后端服务
 Write-Host "🌟 启动FastAPI服务器..." -ForegroundColor Green
-Write-Host "📍 服务地址: http://localhost:8000" -ForegroundColor Cyan
-Write-Host "📖 API文档: http://localhost:8000/docs" -ForegroundColor Cyan
+Write-Host "📍 服务地址: http://localhost:8001" -ForegroundColor Cyan
+Write-Host "📖 API文档: http://localhost:8001/docs" -ForegroundColor Cyan
 Write-Host "🛑 按 Ctrl+C 停止服务" -ForegroundColor Yellow
 Write-Host ""
 
 try {
-    uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+    uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
 } catch {
     Write-Host "❌ 启动失败: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "💡 请检查配置文件和依赖是否正确安装" -ForegroundColor Yellow

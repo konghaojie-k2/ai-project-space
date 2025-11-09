@@ -9,7 +9,7 @@ from datetime import datetime
 
 class UserBase(BaseModel):
     """用户基础信息"""
-    username: str = Field(..., min_length=3, max_length=50, description="用户名")
+    username: Optional[str] = Field(None, min_length=3, max_length=50, description="用户名")
     email: EmailStr = Field(..., description="邮箱地址")
     full_name: Optional[str] = Field(None, max_length=100, description="全名")
     avatar_url: Optional[str] = Field(None, description="头像URL")

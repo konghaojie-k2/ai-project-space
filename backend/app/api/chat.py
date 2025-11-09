@@ -11,17 +11,13 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
 from pydantic import BaseModel
 from loguru import logger
 
-from ..core.database import get_db
 from ..services.ai_service import ai_service
-from ..models.user import User
+from ..services.supabase_client import supabase_service
+from typing import Dict, Any
 from ..models.chat import (
-    Conversation as ConversationModel,
-    ChatMessage as ChatMessageModel,
     ChatRequest, 
     ChatResponse, 
     MessageResponse, 
@@ -36,81 +32,76 @@ from ..models.chat import (
 router = APIRouter(tags=["chat"])
 
 # 导入认证依赖
-from .api_v1.endpoints.auth import get_current_user
+from ..dependencies.auth import get_current_user
 
 @router.post("/conversations", response_model=ConversationResponse)
 async def create_conversation(
     request: ConversationCreate, 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """创建新会话"""
+    """创建新会话（已迁移到 Supabase）"""
     try:
+        # TODO: 使用 Supabase 创建会话
         conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
         
-        # 创建数据库记录
-        db_conversation = ConversationModel(
-            id=conversation_id,
-            title=request.title,
-            project_id=request.project_id,
-            project_name=None,  # 这里可以从项目数据库获取
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
+        # 使用 Supabase 创建会话
+        session_data = {
+            'id': conversation_id,
+            'title': request.title,
+            'project_id': request.project_id,
+            'user_id': str(current_user.get('id')),
+            'created_at': datetime.utcnow().isoformat(),
+            'updated_at': datetime.utcnow().isoformat()
+        }
         
-        db.add(db_conversation)
-        db.commit()
-        db.refresh(db_conversation)
+        db_conversation = await supabase_service.create_chat_session(session_data)
+        
+        if not db_conversation:
+            raise HTTPException(status_code=500, detail="创建会话失败")
         
         logger.info(f"创建新会话: {conversation_id}, 标题: {request.title}")
         
         return ConversationResponse(
-            id=db_conversation.id,
-            title=db_conversation.title,
-            project_id=db_conversation.project_id,
-            project_name=db_conversation.project_name,
+            id=db_conversation.get('id'),
+            title=db_conversation.get('title'),
+            project_id=db_conversation.get('project_id'),
+            project_name=None,
             last_message=None,
             message_count=0,
-            created_at=db_conversation.created_at.isoformat(),
-            updated_at=db_conversation.updated_at.isoformat()
+            created_at=db_conversation.get('created_at'),
+            updated_at=db_conversation.get('updated_at')
         )
         
     except Exception as e:
-        db.rollback()
         logger.error(f"创建会话失败: {e}")
         raise HTTPException(status_code=500, detail="创建会话失败")
 
 @router.get("/conversations", response_model=List[ConversationResponse])
 async def get_conversations(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """获取会话列表"""
+    """获取会话列表（已迁移到 Supabase）"""
     try:
-        # 从数据库获取会话，按更新时间排序
-        conversations = db.query(ConversationModel).order_by(desc(ConversationModel.updated_at)).all()
+        # 使用 Supabase 获取会话列表
+        user_id = str(current_user.get('id'))
+        conversations = await supabase_service.get_user_chat_sessions(user_id)
         
         result = []
         for conv in conversations:
             # 获取最后一条消息
-            last_message = db.query(ChatMessageModel).filter(
-                ChatMessageModel.conversation_id == conv.id
-            ).order_by(desc(ChatMessageModel.timestamp)).first()
-            
-            # 获取消息数量
-            message_count = db.query(ChatMessageModel).filter(
-                ChatMessageModel.conversation_id == conv.id
-            ).count()
+            session_id = conv.get('id')
+            messages = await supabase_service.get_chat_session_messages(session_id)
+            last_message = messages[-1] if messages else None
             
             result.append(ConversationResponse(
-                id=conv.id,
-                title=conv.title,
-                project_id=conv.project_id,
-                project_name=conv.project_name,
-                last_message=last_message.content[:100] + "..." if last_message else None,
-                message_count=message_count,
-                created_at=conv.created_at.isoformat(),
-                updated_at=conv.updated_at.isoformat()
+                id=conv.get('id'),
+                title=conv.get('title'),
+                project_id=conv.get('project_id'),
+                project_name=None,
+                last_message=last_message.get('content', '')[:100] + "..." if last_message else None,
+                message_count=len(messages),
+                created_at=conv.get('created_at'),
+                updated_at=conv.get('updated_at')
             ))
         
         return result
@@ -122,36 +113,28 @@ async def get_conversations(
 @router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
     conversation_id: str, 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """获取会话详情"""
+    """获取会话详情（已迁移到 Supabase）"""
     try:
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
+        conversation = await supabase_service.get_chat_session(conversation_id)
         
         if not conversation:
             raise HTTPException(status_code=404, detail="会话不存在")
         
         # 获取最后一条消息和消息数量
-        last_message = db.query(ChatMessageModel).filter(
-            ChatMessageModel.conversation_id == conversation_id
-        ).order_by(desc(ChatMessageModel.timestamp)).first()
-        
-        message_count = db.query(ChatMessageModel).filter(
-            ChatMessageModel.conversation_id == conversation_id
-        ).count()
+        messages = await supabase_service.get_chat_session_messages(conversation_id)
+        last_message = messages[-1] if messages else None
         
         return ConversationResponse(
-            id=conversation.id,
-            title=conversation.title,
-            project_id=conversation.project_id,
-            project_name=conversation.project_name,
-            last_message=last_message.content[:100] + "..." if last_message else None,
-            message_count=message_count,
-            created_at=conversation.created_at.isoformat(),
-            updated_at=conversation.updated_at.isoformat()
+            id=conversation.get('id'),
+            title=conversation.get('title'),
+            project_id=conversation.get('project_id'),
+            project_name=None,
+            last_message=last_message.get('content', '')[:100] + "..." if last_message else None,
+            message_count=len(messages),
+            created_at=conversation.get('created_at'),
+            updated_at=conversation.get('updated_at')
         )
         
     except HTTPException:
@@ -163,21 +146,21 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str, 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """删除会话"""
+    """删除会话（已迁移到 Supabase）"""
     try:
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
+        # 检查会话是否存在
+        conversation = await supabase_service.get_chat_session(conversation_id)
         
         if not conversation:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 删除会话（消息会通过cascade自动删除）
-        db.delete(conversation)
-        db.commit()
+        # 使用 Supabase 删除会话
+        deleted = await supabase_service.delete_chat_session(conversation_id)
+        
+        if not deleted:
+            raise HTTPException(status_code=500, detail="删除会话失败")
         
         logger.info(f"删除会话: {conversation_id}")
         
@@ -186,39 +169,33 @@ async def delete_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"删除会话失败: {e}")
         raise HTTPException(status_code=500, detail="删除会话失败")
 
 @router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
 async def get_messages(
     conversation_id: str, 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """获取会话消息"""
+    """获取会话消息（已迁移到 Supabase）"""
     try:
         # 验证会话存在
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
+        conversation = await supabase_service.get_chat_session(conversation_id)
         
         if not conversation:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 获取消息，按时间顺序排序
-        messages = db.query(ChatMessageModel).filter(
-            ChatMessageModel.conversation_id == conversation_id
-        ).order_by(ChatMessageModel.timestamp).all()
+        # 使用 Supabase 获取消息，按时间顺序排序
+        messages = await supabase_service.get_chat_session_messages(conversation_id)
         
         return [
             MessageResponse(
-                id=msg.id,
-                role=msg.role,
-                content=msg.content,
-                timestamp=msg.timestamp,
-                conversation_id=msg.conversation_id,
-                model=msg.meta_data.get("model") if msg.meta_data else None
+                id=msg.get('id'),
+                role=msg.get('role'),
+                content=msg.get('content'),
+                timestamp=msg.get('created_at'),
+                conversation_id=conversation_id,
+                model=msg.get('metadata', {}).get("model") if msg.get('metadata') else None
             )
             for msg in messages
         ]
@@ -233,56 +210,50 @@ async def get_messages(
 async def send_message(
     conversation_id: str, 
     request: ChatRequest, 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """发送消息（非流式）"""
+    """发送消息（非流式，已迁移到 Supabase）"""
     try:
         # 验证会话存在
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
+        conversation = await supabase_service.get_chat_session(conversation_id)
         
         if not conversation:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 保存用户消息到数据库
-        user_message = ChatMessageModel(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            conversation_id=conversation_id,
-            role="user",
-            content=request.messages[-1]["content"],
-            timestamp=datetime.utcnow()
-        )
-        
-        db.add(user_message)
-        db.commit()
+        # 保存用户消息到 Supabase
+        user_message_data = {
+            'id': f"msg_{uuid.uuid4().hex[:8]}",
+            'session_id': conversation_id,
+            'role': 'user',
+            'content': request.messages[-1]["content"],
+            'created_at': datetime.utcnow().isoformat()
+        }
+        await supabase_service.create_chat_message(user_message_data)
         
         # 调用AI服务（带权限过滤）
         ai_response = await ai_service.chat_completion(
             messages=request.messages,
             project_context=request.project_id,
             model_name=request.model or "gpt-3.5-turbo",
-            user_id=current_user.id,
-            is_admin=current_user.is_superuser
+            user_id=str(current_user.get('id')),
+            is_admin=current_user.get('is_superuser', False)
         )
         
-        # 保存AI回复到数据库
-        ai_message = ChatMessageModel(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            conversation_id=conversation_id,
-            role="assistant",
-            content=ai_response.content,
-            timestamp=datetime.utcnow(),
-            meta_data={"model": ai_response.model} if hasattr(ai_response, 'model') else {"model": "Claude-3.5"}
-        )
-        
-        db.add(ai_message)
+        # 保存AI回复到 Supabase
+        ai_message_data = {
+            'id': f"msg_{uuid.uuid4().hex[:8]}",
+            'session_id': conversation_id,
+            'role': 'assistant',
+            'content': ai_response.content,
+            'created_at': datetime.utcnow().isoformat(),
+            'metadata': {"model": ai_response.model} if hasattr(ai_response, 'model') else {"model": "Claude-3.5"}
+        }
+        await supabase_service.create_chat_message(ai_message_data)
         
         # 更新会话信息
-        conversation.updated_at = datetime.utcnow()
-        
-        db.commit()
+        await supabase_service.update_chat_session(conversation_id, {
+            'updated_at': datetime.utcnow().isoformat()
+        })
         
         logger.info(f"消息发送成功，会话: {conversation_id}")
         
@@ -291,7 +262,6 @@ async def send_message(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"发送消息失败: {e}")
         raise HTTPException(status_code=500, detail="发送消息失败")
 
@@ -299,38 +269,33 @@ async def send_message(
 async def send_message_stream(
     conversation_id: str, 
     request: ChatRequest, 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """发送消息（流式响应）- 数据库持久化版本"""
+    """发送消息（流式响应，已迁移到 Supabase）"""
     try:
         # 验证会话存在
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.id == conversation_id
-        ).first()
+        conversation = await supabase_service.get_chat_session(conversation_id)
         
         if not conversation:
             raise HTTPException(status_code=404, detail="会话不存在")
         
-        # 保存用户消息到数据库
-        user_message = ChatMessageModel(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            conversation_id=conversation_id,
-            role="user",
-            content=request.messages[-1]["content"],
-            timestamp=datetime.utcnow()
-        )
-        
-        db.add(user_message)
-        db.commit()
+        # 保存用户消息到 Supabase
+        user_message_data = {
+            'id': f"msg_{uuid.uuid4().hex[:8]}",
+            'session_id': conversation_id,
+            'role': 'user',
+            'content': request.messages[-1]["content"],
+            'created_at': datetime.utcnow().isoformat()
+        }
+        await supabase_service.create_chat_message(user_message_data)
         
         # 生成AI消息ID
         ai_message_id = f"msg_{uuid.uuid4().hex[:8]}"
         ai_content = ""
         
         # 在异步生成器外部提取需要的值，避免数据库会话问题
-        user_id = current_user.id
-        is_admin = current_user.is_superuser
+        user_id = str(current_user.get('id'))
+        is_admin = current_user.get('is_superuser', False)
         
         async def generate_stream():
             nonlocal ai_content
@@ -402,26 +367,21 @@ async def send_message_stream(
                 from app.services.volcengine_client import volcengine_client
                 model_name = volcengine_client.llm_model
                 
-                # 保存完整的AI回复到数据库
-                ai_message = ChatMessageModel(
-                    id=ai_message_id,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=ai_content,
-                    timestamp=datetime.utcnow(),
-                    meta_data={"model": model_name}  # 使用真实的模型名称
-                )
+                # 保存完整的AI回复到 Supabase
+                ai_message_data = {
+                    'id': ai_message_id,
+                    'session_id': conversation_id,
+                    'role': 'assistant',
+                    'content': ai_content,
+                    'created_at': datetime.utcnow().isoformat(),
+                    'metadata': {"model": model_name}
+                }
+                await supabase_service.create_chat_message(ai_message_data)
                 
-                db.add(ai_message)
-                
-                # 重新获取会话对象并更新时间
-                conversation = db.query(ConversationModel).filter(
-                    ConversationModel.id == conversation_id
-                ).first()
-                if conversation:
-                    conversation.updated_at = datetime.utcnow()
-                
-                db.commit()
+                # 更新会话信息
+                await supabase_service.update_chat_session(conversation_id, {
+                    'updated_at': datetime.utcnow().isoformat()
+                })
                 
                 # 发送完成信号
                 end_event = {
@@ -465,22 +425,21 @@ async def send_message_stream(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"发送流式消息失败: {e}")
         raise HTTPException(status_code=500, detail="发送流式消息失败")
 
 @router.post("/search", response_model=List[DocumentSearchResponse])
 async def search_documents(
     request: DocumentSearchRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """搜索相关文档"""
     try:
         results = await ai_service.search_similar_documents(
             query=request.query,
             top_k=request.n_results,
-            user_id=current_user.id,
-            is_admin=current_user.is_superuser
+            user_id=str(current_user.get('id')),
+            is_admin=current_user.get('is_superuser', False)
         )
         
         return [
@@ -540,29 +499,20 @@ async def health_check():
         }
 
 @router.get("/stats")
-async def get_chat_stats(db: Session = Depends(get_db)):
+async def get_chat_stats(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
-    获取聊天统计信息
+    获取聊天统计信息（使用Supabase）
     """
     try:
-        # 统计对话总数
-        total_conversations = db.query(func.count(ConversationModel.id)).scalar()
+        # 使用Supabase获取统计信息
+        user_id = str(current_user.get('id'))
+        stats = await supabase_service.get_chat_stats(user_id=user_id)
         
-        # 统计消息总数
-        total_messages = db.query(func.count(ChatMessageModel.id)).scalar()
+        logger.info(f"聊天统计: 对话数={stats['total_conversations']}, 消息数={stats['total_messages']}, AI消息数={stats['ai_messages']}")
         
-        # 统计AI消息数量
-        ai_messages = db.query(func.count(ChatMessageModel.id)).filter(
-            ChatMessageModel.role == 'assistant'
-        ).scalar()
-        
-        logger.info(f"聊天统计: 对话数={total_conversations}, 消息数={total_messages}, AI消息数={ai_messages}")
-        
-        return {
-            "total_conversations": total_conversations or 0,
-            "total_messages": total_messages or 0,
-            "ai_messages": ai_messages or 0
-        }
+        return stats
         
     except Exception as e:
         logger.error(f"获取聊天统计失败: {e}")
@@ -586,32 +536,24 @@ async def get_model_info():
         raise HTTPException(status_code=500, detail=f"获取模型信息失败: {str(e)}")
 
 @router.post("/debug/fix-old-messages")
-async def fix_old_messages(db: Session = Depends(get_db)):
+async def fix_old_messages(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
-    修复旧消息的模型信息（调试用）
+    修复旧消息的模型信息（调试用，已迁移到 Supabase）
     """
     try:
         from app.services.volcengine_client import volcengine_client
         
-        # 获取所有没有模型信息的AI消息
-        messages_to_fix = db.query(ChatMessageModel).filter(
-            ChatMessageModel.role == 'assistant',
-            ChatMessageModel.meta_data.is_(None)
-        ).all()
-        
-        updated_count = 0
-        for message in messages_to_fix:
-            message.meta_data = {"model": volcengine_client.llm_model}
-            updated_count += 1
-        
-        db.commit()
+        # TODO: 实现 Supabase 版本的修复逻辑
+        # 需要查询所有没有模型信息的AI消息并更新
+        logger.warning("⚠️ fix_old_messages 端点需要迁移到 Supabase")
         
         return {
-            "updated_messages": updated_count,
+            "message": "此功能需要迁移到 Supabase",
             "model_used": volcengine_client.llm_model
         }
         
     except Exception as e:
         logger.error(f"修复旧消息失败: {e}")
-        db.rollback()
         raise HTTPException(status_code=500, detail=f"修复旧消息失败: {str(e)}")

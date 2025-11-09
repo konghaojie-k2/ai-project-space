@@ -1,13 +1,17 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import AnyHttpUrl, PostgresDsn, field_validator
+from pydantic import AnyHttpUrl, PostgresDsn, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 获取项目根目录（backend的父目录）
+# 如果当前文件在 backend/app/core/config.py，则项目根目录是 backend 的父目录
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", 
+        env_file=str(PROJECT_ROOT / ".env"),  # 使用项目根目录的.env文件
         env_file_encoding="utf-8",
         env_ignore_empty=True, 
         extra="ignore",
@@ -27,7 +31,17 @@ class Settings(BaseSettings):
     # ========================================
     BACKEND_HOST: str = "0.0.0.0"
     FRONTEND_PORT: int = 3000
-    BACKEND_PORT: int = 8000
+    BACKEND_PORT: int = 8001
+
+    # ========================================
+    # RAG服务配置
+    # ========================================
+    RAG_API_ENDPOINT: str = "http://localhost:8001"  # 独立RAG服务的API端点
+    RAG_API_KEY: Optional[str] = None  # RAG服务的API密钥
+    RAG_COLLECTION_NAME: str = "project_management"  # 默认知识库名称
+    RAG_TIMEOUT: int = 30  # RAG服务请求超时时间（秒）
+    RAG_MAX_RETRIES: int = 3  # RAG服务请求重试次数
+    USE_RAG_SERVICE: bool = True  # 是否使用RAG服务
     
     # ========================================
     # 安全配置
@@ -40,45 +54,59 @@ class Settings(BaseSettings):
     # ========================================
     # CORS配置
     # ========================================
-    BACKEND_CORS_ORIGINS: List[str] = []
+    BACKEND_CORS_ORIGINS: Union[str, List[str]] = Field(
+        default=[],
+        description="CORS允许的源列表，支持逗号分隔的字符串或JSON数组格式"
+    )
     
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+    def assemble_cors_origins(cls, v: Any) -> List[str]:
+        """处理CORS配置，支持多种格式"""
         if v is None:
             return []
+        
+        # 如果已经是列表，直接返回
+        if isinstance(v, list):
+            return v
+        
+        # 处理字符串格式
         if isinstance(v, str):
-            # 处理空字符串或只有空白字符的情况
             v = v.strip()
+            # 处理空字符串
             if not v or v == "[]" or v == "":
                 return []
+            
+            # 尝试解析JSON格式（如果值以[开头和]结尾）
             if v.startswith("[") and v.endswith("]"):
-                # 处理JSON格式的字符串
                 import json
                 try:
                     result = json.loads(v)
                     return result if isinstance(result, list) else []
-                except (json.JSONDecodeError, TypeError):
-                    # 如果JSON解析失败，尝试作为逗号分隔的字符串处理
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    # JSON解析失败，尝试作为逗号分隔的字符串处理
                     v = v.strip("[]")
-                    return [i.strip() for i in v.split(",") if i.strip()]
+            
+            # 作为逗号分隔的字符串处理
             return [i.strip() for i in v.split(",") if i.strip()]
-        elif isinstance(v, list):
-            return v
+        
+        # 其他类型，返回空列表
         return []
     
     # ========================================
-    # 数据库配置
+    # 数据库配置（已废弃，使用 Supabase）
     # ========================================
+    # 注意：项目已完全迁移到 Supabase，不再使用本地数据库
+    # DATABASE_URL 保留仅为兼容性，实际不会被使用
     DATABASE_URL: Optional[str] = None
-    
-    @field_validator("DATABASE_URL", mode="before")
-    @classmethod
-    def assemble_db_connection(cls, v: Optional[str]) -> Any:
-        if isinstance(v, str):
-            return v
-        # 使用SQLite进行开发测试
-        return "sqlite:///./test.db"
+
+    # ========================================
+    # Supabase配置
+    # ========================================
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_KEY: Optional[str] = None  # Anon Key (用于客户端操作，如用户登录/注册)
+    SUPABASE_ANON_KEY: Optional[str] = None  # Anon Key的别名
+    SUPABASE_SERVICE_KEY: Optional[str] = None  # Service Key (用于服务端管理操作)
     
     # ========================================
     # Redis配置
@@ -90,19 +118,67 @@ class Settings(BaseSettings):
     # ========================================
     UPLOAD_DIR: Path = Path("../uploads")  # 使用项目根目录
     MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
-    ALLOWED_FILE_TYPES: List[str] = [
-        "pdf", "docx", "xlsx", "pptx", "txt", "md",
-        "jpg", "jpeg", "png", "gif", "bmp",
-        "mp4", "avi", "mov", "wmv",
-        "mp3", "wav", "flac"
-    ]
+    ALLOWED_FILE_TYPES: Union[str, List[str]] = Field(
+        default=[
+            "pdf", "docx", "xlsx", "pptx", "txt", "md",
+            "jpg", "jpeg", "png", "gif", "bmp",
+            "mp4", "avi", "mov", "wmv",
+            "mp3", "wav", "flac"
+        ],
+        description="允许的文件类型列表，支持逗号分隔的字符串或JSON数组格式"
+    )
+    
+    @field_validator("ALLOWED_FILE_TYPES", mode="before")
+    @classmethod
+    def assemble_file_types(cls, v: Any) -> List[str]:
+        """处理文件类型配置，支持多种格式"""
+        if v is None:
+            return []
+        
+        # 如果已经是列表，直接返回
+        if isinstance(v, list):
+            return v
+        
+        # 处理字符串格式
+        if isinstance(v, str):
+            v = v.strip()
+            # 处理空字符串
+            if not v or v == "[]" or v == "":
+                return []
+            
+            # 尝试解析JSON格式（如果值以[开头和]结尾）
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    result = json.loads(v)
+                    return result if isinstance(result, list) else []
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    # JSON解析失败，尝试作为逗号分隔的字符串处理
+                    v = v.strip("[]")
+            
+            # 作为逗号分隔的字符串处理
+            return [i.strip() for i in v.split(",") if i.strip()]
+        
+        # 其他类型，返回空列表
+        return []
     
     # ========================================
-    # ChromaDB配置
+    # 向量数据库配置 (替换ChromaDB)
     # ========================================
+    VECTOR_DIMENSION: int = 1536  # OpenAI embedding维度
+    EMBEDDING_MODEL: str = "text-embedding-ada-002"
+    VECTOR_SIMILARITY_THRESHOLD: float = 0.7
+
+    # ChromaDB配置 (保留向后兼容，将逐步移除)
     CHROMA_HOST: str = "localhost"
     CHROMA_PORT: int = 8001
     CHROMA_COLLECTION_NAME: str = "project_documents"
+
+    # ========================================
+    # Supabase Storage配置 (替换MinIO)
+    # ========================================
+    STORAGE_BUCKET: str = "project-files"
+    STORAGE_MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
     
     # ========================================
     # AI模型配置
@@ -185,6 +261,19 @@ class Settings(BaseSettings):
     def is_testing(self) -> bool:
         """是否为测试环境"""
         return self.ENVIRONMENT.lower() == "testing"
+
+    @property
+    def use_supabase(self) -> bool:
+        """是否使用Supabase"""
+        # 检查必需的Supabase配置：URL和至少一个Key
+        # Anon Key用于用户认证操作，Service Key用于管理员操作
+        anon_key = self.SUPABASE_ANON_KEY or self.SUPABASE_KEY
+        return self.SUPABASE_URL is not None and (anon_key is not None or self.SUPABASE_SERVICE_KEY is not None)
+    
+    @property
+    def supabase_anon_key(self) -> Optional[str]:
+        """获取Supabase Anon Key"""
+        return self.SUPABASE_ANON_KEY or self.SUPABASE_KEY
     
     def get_cors_origins(self) -> List[str]:
         """获取CORS允许的源"""

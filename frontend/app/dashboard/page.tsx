@@ -77,6 +77,7 @@ const fetchChatStats = async (): Promise<{ aiChats: number }> => {
 
 export default function DashboardPage() {
   const [isLoaded, setIsLoaded] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const [stats, setStats] = useState<DashboardStats>({
     activeProjects: 0,
     totalFiles: 0,
@@ -86,35 +87,67 @@ export default function DashboardPage() {
   })
 
   useEffect(() => {
+    let isMounted = true
+    let isRequesting = false
+
     const loadDashboardData = async () => {
-      // 使用同步服务获取项目统计
-      const globalStats = projectSync.getGlobalStats()
-      
-      // 获取真实文件统计
-      const fileStats = await fetchGlobalFileStats()
-      
-      // 获取真实AI对话统计
-      const chatStats = await fetchChatStats()
-      
-      setStats({
-        activeProjects: globalStats.activeProjects,
-        totalFiles: fileStats.totalFiles,
-        totalSize: fileStats.totalSize,
-        totalMembers: globalStats.totalMembers,
-        aiChats: chatStats.aiChats
-      })
-      
-      setIsLoaded(true)
+      // 防止重复请求
+      if (isRequesting) {
+        console.log('⏳ Dashboard数据正在加载中，跳过重复请求')
+        return
+      }
+
+      isRequesting = true
+      setIsLoading(true)
+
+      try {
+        // 使用同步服务获取项目统计
+        const globalStats = projectSync.getGlobalStats()
+        
+        // 获取真实文件统计
+        const fileStats = await fetchGlobalFileStats()
+        
+        // 获取真实AI对话统计
+        const chatStats = await fetchChatStats()
+        
+        // 只在组件仍然挂载时更新状态
+        if (isMounted) {
+          setStats({
+            activeProjects: globalStats.activeProjects,
+            totalFiles: fileStats.totalFiles,
+            totalSize: fileStats.totalSize,
+            totalMembers: globalStats.totalMembers,
+            aiChats: chatStats.aiChats
+          })
+          
+          setIsLoaded(true)
+        }
+      } catch (error) {
+        console.error('❌ 加载Dashboard数据失败:', error)
+      } finally {
+        isRequesting = false
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
     }
     
     loadDashboardData()
 
-    // 订阅项目数据变化，实时更新统计
+    // 订阅项目数据变化，实时更新统计（延迟执行，避免立即触发）
     const unsubscribe = projectSync.subscribe(() => {
-      loadDashboardData()
+      // 使用 setTimeout 避免立即触发，给组件时间完成初始加载
+      setTimeout(() => {
+        if (isMounted && !isRequesting) {
+          loadDashboardData()
+        }
+      }, 100)
     })
     
-    return unsubscribe
+    return () => {
+      isMounted = false
+      unsubscribe()
+    }
   }, [])
 
   const statsCards = [

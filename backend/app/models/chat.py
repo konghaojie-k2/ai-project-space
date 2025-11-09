@@ -13,14 +13,13 @@ from .base import Base
 
 
 class Conversation(Base):
-    """会话模型"""
-    __tablename__ = "conversations"
+    """会话模型 - 对应数据库表 chat_sessions"""
+    __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True, index=True)
-    title = Column(String, nullable=False)
+    title = Column(String, nullable=True)  # 数据库中是nullable
     project_id = Column(String, nullable=True)
-    project_name = Column(String, nullable=True)
-    user_id = Column(String, nullable=True)  # 预留用户关联
+    user_id = Column(String, nullable=False)  # 数据库中是not null
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -29,18 +28,35 @@ class Conversation(Base):
 
 
 class ChatMessage(Base):
-    """聊天消息模型"""
+    """聊天消息模型 - 对应数据库表 chat_messages"""
     __tablename__ = "chat_messages"
 
     id = Column(String, primary_key=True, index=True)
-    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False)
+    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)  # 使用session_id
     content = Column(Text, nullable=False)
     role = Column(String, nullable=False)  # 'user' 或 'assistant'
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    meta_data = Column(JSON, nullable=True)  # 存储额外信息，如模型参数、来源等
+    created_at = Column(DateTime, default=datetime.utcnow)  # 数据库中使用created_at
+    # Python属性名为message_metadata，数据库列名为metadata（避免metadata保留字冲突）
+    message_metadata = Column("metadata", JSON, nullable=True)
     
     # 关联会话
     conversation = relationship("Conversation", back_populates="messages")
+    
+    # 向后兼容属性
+    @property
+    def conversation_id(self):
+        """向后兼容：返回session_id"""
+        return self.session_id
+    
+    @property
+    def timestamp(self):
+        """向后兼容：返回created_at"""
+        return self.created_at
+    
+    @property
+    def meta_data(self):
+        """向后兼容：返回message_metadata（避免与SQLAlchemy Base.metadata冲突）"""
+        return self.message_metadata
 
 
 # Pydantic模型用于API序列化

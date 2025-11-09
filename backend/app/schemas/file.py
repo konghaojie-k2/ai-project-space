@@ -41,7 +41,7 @@ class FileCreate(FileBase):
     file_size: int = Field(..., description="文件大小")
     file_type: str = Field(..., description="文件类型")
     uploaded_by: str = Field(..., description="上传者")
-    user_id: Optional[int] = Field(None, description="上传用户ID")
+    user_id: Optional[str] = Field(None, description="上传用户ID（UUID格式）")
     
     @validator('file_size')
     def validate_file_size(cls, v):
@@ -83,7 +83,7 @@ class FileResponse(FileBase):
     access_level: FileAccessLevel = Field(FileAccessLevel.ALL_USERS, description="访问级别")
     
     # 用户信息
-    user_id: Optional[int] = Field(None, description="上传用户ID")
+    user_id: Optional[str] = Field(None, description="上传用户ID（UUID格式）")
     uploaded_by: str = Field(..., description="上传者")
     updated_by: Optional[str] = Field(None, description="更新者")
     
@@ -139,6 +139,14 @@ class FileShareCreate(BaseModel):
         if values.get('share_type') == FileShareType.PASSWORD and not v:
             raise ValueError('密码分享必须设置密码')
         return v
+
+class FileShareRequest(BaseModel):
+    """文件分享请求模式（用于分享给特定用户）"""
+    user_email: str = Field(..., description="目标用户邮箱")
+    can_view: bool = Field(True, description="允许查看")
+    can_download: bool = Field(True, description="允许下载")
+    can_edit: bool = Field(False, description="允许编辑")
+    expires_at: Optional[datetime] = Field(None, description="过期时间")
 
 class FileShareResponse(BaseModel):
     """文件分享响应模式"""

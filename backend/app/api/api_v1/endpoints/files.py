@@ -1,34 +1,21 @@
 from typing import List, Optional
 from pathlib import Path
-import shutil
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form
-from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy.orm import Session
-
-from app.core.config import settings
+from fastapi.responses import StreamingResponse
 from app.core.logging import app_logger
-from app.core.database import get_db
-from app.models.file import FileRecord
-from app.models.user import User
-from app.schemas.file import FileCreate, FileResponse, FileUpdate
-from app.services.file_service import FileService
-from app.services.file_storage import LocalFileService
-from app.utils.file_utils import get_file_type, validate_file_size, validate_file_type
+from typing import Dict, Any
+from app.schemas.file import FileResponse, FileUpdate
+from app.services.supabase_file_service import supabase_file_service
+from app.services.rag_client import rag_client
+from app.utils.file_utils import validate_file_size, validate_file_type
 
 router = APIRouter()
 
 # 导入认证依赖
-from app.api.api_v1.endpoints.auth import get_current_user, get_current_admin_user
-
-# 依赖注入
-def get_file_service(db: Session = Depends(get_db)):
-    return FileService(db)
-
-def get_storage_service():
-    return LocalFileService()
+from app.dependencies.auth import get_current_user, get_current_active_user, get_current_user_token, get_current_user_tokens
 
 @router.post("/upload", response_model=List[FileResponse])
 async def upload_files(
@@ -39,17 +26,37 @@ async def upload_files(
     description: Optional[str] = Form(None),
     access_level: str = Form("all_users"),  # 访问级别，默认全员
     uploaded_by: Optional[str] = Form(None),  # 添加上传者参数
-    current_user: User = Depends(get_current_user),
-    file_service: FileService = Depends(get_file_service),
-    storage_service: LocalFileService = Depends(get_storage_service)
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    token: str = Depends(get_current_user_token)  # 获取access_token用于设置认证上下文
 ):
     """
-    上传文件到MinIO并记录到数据库
+    上传文件到Supabase Storage并记录到数据库
+    如果指定了project_id，同时上传到外部RAG知识库
     """
     try:
         uploaded_files = []
 
+        # 注意：文件记录创建现在使用admin_client（Service Key）绕过RLS限制
+        # 因此不需要设置认证上下文
+        
         tags_list = tags.split(",") if tags else []
+        
+        # 权限检查：如果指定了project_id，验证用户是否有权限访问此项目
+        user_id = str(current_user.get('id'))
+        if project_id:
+            from app.dependencies.auth import validate_user_project_access
+            has_access = await validate_user_project_access(
+                user_id=user_id,
+                project_id=project_id,
+                required_role='member'  # 至少需要member角色才能上传文件
+            )
+            if not has_access:
+                app_logger.warning(f"用户 {user_id} 尝试上传文件到无权访问的项目 {project_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="无权限上传文件到此项目，您需要是项目成员才能上传文件"
+                )
+            app_logger.info(f"✅ 用户 {user_id} 有权限上传文件到项目 {project_id}")
         
         for i, file in enumerate(files):
             app_logger.info(f"🔥 处理第 {i+1} 个文件: {file.filename}, 大小: {file.size}, 类型: {file.content_type}")
@@ -72,109 +79,115 @@ async def upload_files(
             
             app_logger.info(f"🔥 文件验证通过: {file.filename}")
             
-            # 生成唯一文件名
-            file_id = str(uuid.uuid4())
-            file_extension = Path(file.filename).suffix
-            stored_filename = f"{file_id}{file_extension}"
+            # 读取文件内容
+            await file.seek(0)
+            file_content = await file.read()
             
-            app_logger.info(f"🔥 生成存储文件名: {stored_filename}")
-            
-            # 上传到本地存储
-            app_logger.info(f"🔥 开始上传文件到本地存储: {stored_filename}")
+            # 上传到Supabase Storage（文件名会在supabase_file_service中生成）
+            app_logger.info(f"🔥 开始上传文件到Supabase Storage: {file.filename}")
             try:
-                object_name = await storage_service.upload_file(
-                    file=file,
-                    object_name=stored_filename
-                )
-                app_logger.info(f"🔥 文件存储成功: {object_name}")
-            except Exception as storage_error:
-                app_logger.error(f"🔥 文件存储失败: {str(storage_error)}")
-                raise
-            
-            # 创建文件记录
-            app_logger.info(f"🔥 开始创建数据库记录")
-            try:
-                file_create = FileCreate(
-                    original_name=file.filename,
-                    stored_name=stored_filename,
-                    file_path=object_name,
-                    file_size=file.size,
-                    file_type=file.content_type,
-                    project_id=project_id,
-                    stage=stage,
-                    tags=tags_list,
-                    description=description,
-                    uploaded_by=uploaded_by or current_user.username,  # 使用传递的上传者信息或默认用户名
-                    user_id=current_user.id,
-                    access_level=access_level  # 直接使用字符串访问级别
-                )
-                app_logger.info(f"🔥 FileCreate对象创建成功: {file_create}")
+                # 构建存储路径
+                username = current_user.get('username') or current_user.get('email', 'user').split('@')[0]
+                file_path = f"uploads/{username}"
                 
-                # 保存到数据库
-                app_logger.info(f"🔥 开始保存到数据库")
-                file_record = file_service.create_file(file_create)
+                # 使用supabase_file_service上传（user_id已在上面定义）
+                file_record_data = await supabase_file_service.upload_file(
+                    file_path=file_path,
+                    file_content=file_content,
+                    filename=file.filename,
+                    user_id=user_id,
+                    project_id=project_id,
+                    access_level=access_level,
+                    description=description,
+                    tags=tags_list,
+                    access_token=token  # 传递access_token用于设置认证上下文
+                )
+                
+                if not file_record_data:
+                    raise HTTPException(status_code=500, detail="文件上传到Supabase Storage失败")
+                
+                app_logger.info(f"🔥 文件存储成功: {file_record_data.get('file_path')}")
+                
+                # 转换为FileResponse格式
+                file_record = FileResponse(
+                    id=file_record_data.get('id'),
+                    original_name=file_record_data.get('original_name'),
+                    stored_name=file_record_data.get('stored_name'),
+                    file_path=file_record_data.get('file_path'),
+                    file_size=file_record_data.get('file_size'),
+                    file_type=file_record_data.get('file_type'),
+                    project_id=file_record_data.get('project_id'),
+                    stage=stage,  # 注意：Supabase Storage可能没有stage字段
+                    tags=file_record_data.get('tags', []),
+                    description=file_record_data.get('description'),
+                    uploaded_by=file_record_data.get('uploaded_by'),
+                    user_id=file_record_data.get('uploaded_by'),
+                    access_level=file_record_data.get('access_level', 'all_users'),
+                    is_public=file_record_data.get('is_public', False),
+                    created_at=file_record_data.get('created_at'),
+                    updated_at=file_record_data.get('updated_at')
+                )
+                
                 app_logger.info(f"🔥 数据库记录创建成功: {file_record.id}")
                 
                 uploaded_files.append(file_record)
                 
-                app_logger.info(f"🔥 文件上传成功: {file.filename} -> {stored_filename}")
+                # 使用数据库返回的实际文件名
+                app_logger.info(f"🔥 文件上传成功: {file.filename} -> {file_record.stored_name} (ID: {file_record.id})")
                 
-                # 🚀 自动提取内容并索引到向量数据库
-                try:
-                    app_logger.info(f"🤖 开始自动提取文件内容: {file.filename}")
-                    
-                    # 重新读取文件数据用于内容提取
-                    await file.seek(0)  # 重置文件指针
-                    file_data = await file.read()
-                    
-                    # 提取文件内容
-                    content = await file_service.extract_content(file_data, file.content_type or "")
-                    
-                    if content and content.strip():
-                        app_logger.info(f"🤖 内容提取成功，长度: {len(content)} 字符")
+                # 🚀 如果指定了project_id，上传到外部RAG知识库
+                if project_id and rag_client.is_available():
+                    try:
+                        app_logger.info(f"🤖 开始上传文件到外部RAG知识库: {file.filename}")
                         
-                        # 更新文件内容到数据库
-                        await file_service.update_file_content(file_record.id, content)
+                        # 重新读取文件数据用于RAG上传
+                        await file.seek(0)
+                        file_data = await file.read()
                         
-                        # 索引到向量数据库
-                        if project_id:
-                            from app.services.ai_service import ai_service
+                        # 构建元数据
+                        username = current_user.get('username') or current_user.get('email', 'user').split('@')[0]
+                        metadata = {
+                            "uploaded_by": username or user_id,
+                            "user_id": user_id,
+                            "upload_time": datetime.now().isoformat(),
+                            "description": description,
+                            "tags": tags_list,
+                            "content_type": file.content_type,
+                            "file_size": len(file_data),
+                            "stage": stage
+                        }
+                        
+                        # 上传到外部RAG
+                        rag_result = await rag_client.upload_file(
+                            file_content=file_data,
+                            filename=file.filename,
+                            collection_name=f"project_{project_id}",
+                            metadata=metadata
+                        )
+                        
+                        if rag_result.success:
+                            app_logger.info(f"🤖 文件已成功上传到RAG知识库: {file.filename}, 文档ID: {rag_result.document_id}")
+                            # 创建映射记录
+                            from app.services.rag_mapping_service import rag_mapping_service
+                            try:
+                                await rag_mapping_service.create_mapping(
+                                    local_file_id=file_record.id,
+                                    external_document_id=rag_result.document_id,
+                                    external_collection_name=f"project_{project_id}",
+                                    project_id=project_id,
+                                    chunk_count=rag_result.chunk_count
+                                )
+                                app_logger.info(f"✅ RAG映射记录创建成功")
+                            except Exception as mapping_error:
+                                app_logger.warning(f"⚠️ RAG映射记录创建失败: {mapping_error}")
                             
-                            metadata = {
-                                "file_id": file_record.id,
-                                "project_id": project_id,
-                                "file_name": file.filename,
-                                "file_type": file.content_type,
-                                "stage": stage,
-                                "tags": tags_list,
-                                "upload_time": datetime.now().isoformat(),
-                                "content_length": len(content)
-                            }
-                            
-                            success = await ai_service.add_document_to_vector_db(
-                                content=content,
-                                file_id=file_record.id,
-                                file_name=file.filename,
-                                project_id=project_id,
-                                metadata=metadata,
-                                access_level=access_level,
-                                user_id=current_user.id
-                            )
-                            
-                            if success:
-                                app_logger.info(f"🤖 文件已成功索引到向量数据库: {file.filename}")
-                                # 标记文件已处理
-                                file_service.mark_file_processed(file_record.id)
-                            else:
-                                app_logger.warning(f"🤖 文件索引到向量数据库失败: {file.filename}")
+                            # 标记文件已处理
+                            await supabase_file_service.mark_file_processed(file_record.id)
                         else:
-                            app_logger.info(f"🤖 无项目ID，跳过向量索引: {file.filename}")
-                    else:
-                        app_logger.warning(f"🤖 文件内容为空或提取失败: {file.filename}")
-                        
-                except Exception as index_error:
-                    app_logger.error(f"🤖 自动索引失败: {file.filename}, 错误: {str(index_error)}")
-                    # 索引失败不影响文件上传成功
+                            app_logger.warning(f"🤖 文件上传到RAG知识库失败: {file.filename}, 原因: {rag_result.message}")
+                    except Exception as rag_error:
+                        app_logger.error(f"🤖 RAG上传失败: {file.filename}, 错误: {str(rag_error)}")
+                        # RAG上传失败不影响文件上传成功
                 
             except Exception as db_error:
                 app_logger.error(f"🔥 数据库操作失败: {str(db_error)}")
@@ -182,7 +195,7 @@ async def upload_files(
         
         app_logger.info(f"🔥 所有文件上传完成，共 {len(uploaded_files)} 个文件")
         return uploaded_files
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -200,8 +213,7 @@ async def list_files(
     search: Optional[str] = Query(None, description="搜索关键词"),
     page: int = Query(1, ge=1, description="页码"),
     size: int = Query(20, ge=1, le=100, description="每页数量"),
-    current_user: User = Depends(get_current_user),
-    file_service: FileService = Depends(get_file_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     获取文件列表 - 基于用户权限
@@ -210,9 +222,12 @@ async def list_files(
         tags_list = tags.split(",") if tags else None
         
         # 管理员可以查看所有文件，普通用户只能查看自己的文件
-        if current_user.is_superuser:
+        is_superuser = current_user.get('is_superuser', False)
+        user_id = current_user.get('id')
+        
+        if is_superuser:
             # 管理员：获取所有文件
-            files = file_service.get_files(
+            files_data = await supabase_file_service.get_files(
                 project_id=project_id,
                 stage=stage,
                 tags=tags_list,
@@ -221,9 +236,9 @@ async def list_files(
                 size=size
             )
         else:
-            # 普通用户：只获取自己上传的文件
-            files = file_service.get_files_by_user(
-                user_id=current_user.id,
+            # 普通用户：只获取自己可访问的文件
+            files_data = await supabase_file_service.get_files_by_user(
+                user_id=str(user_id),
                 project_id=project_id,
                 stage=stage,
                 tags=tags_list,
@@ -232,6 +247,8 @@ async def list_files(
                 size=size
             )
         
+        # 转换为FileResponse格式
+        files = [FileResponse(**file_data) for file_data in files_data]
         return files
         
     except Exception as e:
@@ -241,22 +258,23 @@ async def list_files(
 @router.get("/{file_id}", response_model=FileResponse)
 async def get_file(
     file_id: str,
-    current_user: User = Depends(get_current_user),
-    file_service: FileService = Depends(get_file_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     获取文件详情 - 基于用户权限
     """
     try:
-        file_record = file_service.get_file_by_id(file_id)
-        if not file_record:
+        file_data = await supabase_file_service.get_file_info(file_id)
+        if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
         # 权限检查：基于新的访问级别系统
-        if not file_service.user_can_access_file(current_user.id, file_id, current_user.is_superuser):
+        user_id = current_user.get('id')
+        is_superuser = current_user.get('is_superuser', False)
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
             raise HTTPException(status_code=403, detail="无权限访问此文件")
         
-        return file_record
+        return FileResponse(**file_data)
         
     except HTTPException:
         raise
@@ -267,38 +285,46 @@ async def get_file(
 @router.get("/{file_id}/download")
 async def download_file(
     file_id: str,
-    current_user: User = Depends(get_current_user),
-    file_service: FileService = Depends(get_file_service),
-    storage_service: LocalFileService = Depends(get_storage_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    下载文件 - 基于用户权限
+    下载文件 - 基于用户权限，从Supabase Storage下载
     """
     try:
         # 获取文件记录
-        file_record = file_service.get_file_by_id(file_id)
-        if not file_record:
+        file_data = await supabase_file_service.get_file_info(file_id)
+        if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
         # 权限检查：基于新的访问级别系统
-        if not file_service.user_can_access_file(current_user.id, file_id, current_user.is_superuser):
+        user_id = current_user.get('id')
+        is_superuser = current_user.get('is_superuser', False)
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
             raise HTTPException(status_code=403, detail="无权限下载此文件")
         
-        # 从本地存储获取文件 - 注意：这里不要使用await，因为download_file返回的是AsyncIterator
-        file_data = storage_service.download_file(
-            object_name=file_record.stored_name
+        # 从Supabase Storage下载文件
+        file_content = await supabase_file_service.download_file(
+            file_id=file_id,
+            user_id=str(user_id)
         )
         
+        if not file_content:
+            raise HTTPException(status_code=500, detail="文件下载失败")
+        
         # 更新下载次数
-        file_service.increment_download_count(file_id)
+        await supabase_file_service.increment_download_count(file_id)
         
         # 处理文件名编码问题
         import urllib.parse
-        encoded_filename = urllib.parse.quote(file_record.original_name.encode('utf-8'))
+        encoded_filename = urllib.parse.quote(file_data.get('original_name', 'file').encode('utf-8'))
+        
+        # 将bytes转换为流
+        from io import BytesIO
+        file_stream = BytesIO(file_content)
         
         return StreamingResponse(
-            file_data,
-            media_type=file_record.file_type,
+            file_stream,
+            media_type=file_data.get('file_type', 'application/octet-stream'),
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
             }
@@ -313,31 +339,44 @@ async def download_file(
 @router.get("/{file_id}/preview")
 async def preview_file(
     file_id: str,
-    file_service: FileService = Depends(get_file_service),
-    storage_service: LocalFileService = Depends(get_storage_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    预览文件
+    预览文件 - 从Supabase Storage获取
     """
     try:
         # 获取文件记录
-        file_record = await file_service.get_file_by_id(file_id)
-        if not file_record:
+        file_data = await supabase_file_service.get_file_info(file_id)
+        if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
-        # 从本地存储获取文件
-        file_data = await storage_service.download_file(
-            object_name=file_record.stored_name
+        # 权限检查
+        user_id = current_user.get('id')
+        is_superuser = current_user.get('is_superuser', False)
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
+            raise HTTPException(status_code=403, detail="无权限预览此文件")
+        
+        # 从Supabase Storage下载文件
+        file_content = await supabase_file_service.download_file(
+            file_id=file_id,
+            user_id=str(user_id)
         )
         
+        if not file_content:
+            raise HTTPException(status_code=500, detail="文件预览失败")
+        
         # 更新查看次数
-        await file_service.increment_view_count(file_id)
+        await supabase_file_service.increment_view_count(file_id)
+        
+        # 将bytes转换为流
+        from io import BytesIO
+        file_stream = BytesIO(file_content)
         
         return StreamingResponse(
-            file_data,
-            media_type=file_record.file_type,
+            file_stream,
+            media_type=file_data.get('file_type', 'application/octet-stream'),
             headers={
-                "Content-Disposition": f"inline; filename={file_record.original_name}"
+                "Content-Disposition": f"inline; filename={file_data.get('original_name', 'file')}"
             }
         )
         
@@ -351,17 +390,26 @@ async def preview_file(
 async def update_file(
     file_id: str,
     file_update: FileUpdate,
-    file_service: FileService = Depends(get_file_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     更新文件信息
     """
     try:
-        file_record = file_service.update_file(file_id, file_update)
-        if not file_record:
-            raise HTTPException(status_code=404, detail="文件不存在")
+        # 转换为字典格式
+        update_dict = file_update.model_dump(exclude_unset=True)
         
-        return file_record
+        user_id = current_user.get('id')
+        file_data = await supabase_file_service.update_file(
+            file_id=file_id,
+            file_update=update_dict,
+            user_id=str(user_id)
+        )
+        
+        if not file_data:
+            raise HTTPException(status_code=404, detail="文件不存在或无权限")
+        
+        return FileResponse(**file_data)
         
     except HTTPException:
         raise
@@ -372,43 +420,53 @@ async def update_file(
 @router.delete("/{file_id}")
 async def delete_file(
     file_id: str,
-    file_service: FileService = Depends(get_file_service),
-    storage_service: LocalFileService = Depends(get_storage_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    删除文件
+    删除文件 - 从Supabase Storage删除，同时删除外部RAG文档
     """
     try:
         # 获取文件记录
-        file_record = file_service.get_file_by_id(file_id)
-        if not file_record:
+        file_data = await supabase_file_service.get_file_info(file_id)
+        if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
-        # 从本地存储删除文件
-        storage_deleted = await storage_service.delete_file(
-            object_name=file_record.stored_name
+        # 权限检查
+        user_id = current_user.get('id')
+        is_superuser = current_user.get('is_superuser', False)
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
+            raise HTTPException(status_code=403, detail="无权限删除此文件")
+        
+        # 删除外部RAG文档（如果存在映射）
+        try:
+            from app.services.rag_mapping_service import rag_mapping_service
+            mapping = await rag_mapping_service.get_mapping_by_file_id(file_id)
+            if mapping and rag_client.is_available():
+                external_doc_id = mapping.get('external_document_id')
+                collection_name = mapping.get('external_collection_name')
+                if external_doc_id:
+                    rag_result = await rag_client.delete_document(
+                        document_id=external_doc_id,
+                        collection_name=collection_name
+                    )
+                    if rag_result.get('success'):
+                        app_logger.info(f"🤖 RAG文档删除成功: {external_doc_id}")
+                    # 删除映射记录
+                    await rag_mapping_service.delete_mapping(external_document_id=external_doc_id)
+        except Exception as rag_error:
+            app_logger.warning(f"⚠️ 删除RAG文档时出错（继续删除文件）: {rag_error}")
+        
+        # 从Supabase Storage删除文件（这会同时删除数据库记录）
+        storage_deleted = await supabase_file_service.delete_file(
+            file_id=file_id,
+            user_id=str(user_id)
         )
         
         if not storage_deleted:
-            app_logger.warning(f"⚠️ 物理文件删除失败，但继续删除数据库记录: {file_record.original_name}")
+            app_logger.warning(f"⚠️ 文件删除失败: {file_data.get('original_name')}")
+            raise HTTPException(status_code=500, detail="文件删除失败")
         else:
-            app_logger.info(f"✅ 物理文件删除成功: {file_record.original_name}")
-        
-        # 从向量数据库删除嵌入向量
-        try:
-            from app.services.ai_service import ai_service
-            vector_deleted = await ai_service.remove_document_from_vector_db(file_id)
-            if vector_deleted:
-                app_logger.info(f"🤖 文件向量已从向量数据库删除: {file_record.original_name}")
-            else:
-                app_logger.warning(f"🤖 文件向量删除失败: {file_record.original_name}")
-        except Exception as vector_error:
-            app_logger.error(f"🤖 删除文件向量时出错: {vector_error}")
-        
-        # 从数据库删除记录
-        file_service.delete_file(file_id)
-        
-        app_logger.info(f"文件删除成功: {file_record.original_name}")
+            app_logger.info(f"✅ 文件删除成功: {file_data.get('original_name')}")
         
         return {"message": "文件删除成功"}
         
@@ -421,46 +479,32 @@ async def delete_file(
 @router.post("/{file_id}/extract-content")
 async def extract_file_content(
     file_id: str,
-    file_service: FileService = Depends(get_file_service),
-    storage_service: LocalFileService = Depends(get_storage_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    提取文件内容（用于AI分析）
+    提取文件内容（已废弃）- 内容提取由外部RAG服务处理
+    此接口保留用于兼容性，实际应使用外部RAG服务
     """
-    try:
-        # 获取文件记录
-        file_record = await file_service.get_file_by_id(file_id)
-        if not file_record:
-            raise HTTPException(status_code=404, detail="文件不存在")
-        
-        # 从本地存储获取文件
-        file_data = await storage_service.download_file(
-            object_name=file_record.stored_name
-        )
-        
-        # 根据文件类型提取内容
-        content = await file_service.extract_content(file_data, file_record.file_type)
-        
-        # 更新文件内容到数据库
-        await file_service.update_file_content(file_id, content)
-        
-        return {"message": "内容提取成功", "content_length": len(content)}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        app_logger.error(f"内容提取失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"内容提取失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="内容提取功能已迁移到外部RAG服务，请使用 /api/v1/files/upload-rag 接口上传文件"
+    )
 
 @router.get("/stats/summary")
 async def get_file_stats(
-    file_service: FileService = Depends(get_file_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     获取文件统计信息
     """
     try:
-        stats = file_service.get_file_stats()
+        is_superuser = current_user.get('is_superuser', False)
+        user_id = current_user.get('id')
+        if is_superuser:
+            stats = await supabase_file_service.get_file_stats_all()
+        else:
+            stats = await supabase_file_service.get_file_stats(str(user_id))
+        
         return {"message": "获取统计信息成功", "data": stats}
         
     except Exception as e:
@@ -471,110 +515,127 @@ async def get_file_stats(
 async def batch_index_files(
     project_id: Optional[str] = None,
     force_reindex: bool = False,
-    file_service: FileService = Depends(get_file_service),
-    storage_service: LocalFileService = Depends(get_storage_service)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    批量索引文件到向量数据库
+    批量上传文件到外部RAG知识库
     
     Args:
-        project_id: 项目ID，如果指定则只索引该项目的文件
-        force_reindex: 是否强制重新索引已处理的文件
+        project_id: 项目ID，如果指定则只处理该项目的文件
+        force_reindex: 是否强制重新上传已处理的文件
     """
     try:
-        from app.services.ai_service import ai_service
+        if not rag_client.is_available():
+            raise HTTPException(status_code=503, detail="RAG服务不可用")
         
-        # 获取需要索引的文件
+        # 获取需要处理的文件
         if project_id:
-            files = file_service.get_files_by_project(project_id)
+            files_data = await supabase_file_service.get_files_by_project(project_id)
         else:
-            files = file_service.get_all_unprocessed_files() if not force_reindex else file_service.get_all_files()
+            files_data = await supabase_file_service.get_all_unprocessed_files() if not force_reindex else await supabase_file_service.get_all_files()
         
-        app_logger.info(f"🤖 开始批量索引，共 {len(files)} 个文件")
+        app_logger.info(f"🤖 开始批量上传到RAG，共 {len(files_data)} 个文件")
         
-        indexed_count = 0
+        uploaded_count = 0
         failed_count = 0
         
-        for file_record in files:
+        for file_data in files_data:
             try:
-                # 跳过已处理的文件（除非强制重新索引）
-                if file_record.is_processed and not force_reindex:
+                # 跳过已处理的文件（除非强制重新上传）
+                if file_data.get('is_processed') and not force_reindex:
                     continue
                 
-                app_logger.info(f"🤖 正在索引文件: {file_record.original_name}")
+                file_id = file_data.get('id')
+                file_name = file_data.get('original_name', 'unknown')
                 
-                # 从存储获取文件数据
-                file_data = await storage_service.download_file(
-                    object_name=file_record.stored_name
+                app_logger.info(f"🤖 正在上传文件到RAG: {file_name}")
+                
+                # 从Supabase Storage获取文件数据
+                user_id = current_user.get('id')
+                file_content = await supabase_file_service.download_file(
+                    file_id=file_id,
+                    user_id=str(user_id)
                 )
                 
-                # 提取文件内容
-                content = await file_service.extract_content(file_data, file_record.file_type)
+                if not file_content:
+                    app_logger.warning(f"⚠️ 文件下载失败，跳过: {file_name}")
+                    failed_count += 1
+                    continue
                 
-                if content and content.strip():
-                    # 更新文件内容到数据库
-                    await file_service.update_file_content(file_record.id, content)
+                # 构建元数据
+                metadata = {
+                    "uploaded_by": file_data.get('uploaded_by', str(user_id)),
+                    "user_id": file_data.get('uploaded_by', str(user_id)),
+                    "upload_time": file_data.get('created_at', datetime.now().isoformat()),
+                    "description": file_data.get('description'),
+                    "tags": file_data.get('tags', []),
+                    "content_type": file_data.get('file_type'),
+                    "file_size": file_data.get('file_size'),
+                    "stage": file_data.get('stage')
+                }
+                
+                # 确定collection名称
+                file_project_id = file_data.get('project_id') or project_id
+                collection_name = f"project_{file_project_id}" if file_project_id else rag_client.config.collection_name
+                
+                # 上传到外部RAG
+                rag_result = await rag_client.upload_file(
+                    file_content=file_content,
+                    filename=file_name,
+                    collection_name=collection_name,
+                    metadata=metadata
+                )
+                
+                if rag_result.success:
+                    # 创建映射记录
+                    from app.services.rag_mapping_service import rag_mapping_service
+                    try:
+                        await rag_mapping_service.create_mapping(
+                            local_file_id=file_id,
+                            external_document_id=rag_result.document_id,
+                            external_collection_name=collection_name,
+                            project_id=file_project_id,
+                            chunk_count=rag_result.chunk_count
+                        )
+                    except Exception as mapping_error:
+                        app_logger.warning(f"⚠️ 映射记录创建失败: {mapping_error}")
                     
-                    # 索引到向量数据库
-                    metadata = {
-                        "file_id": file_record.id,
-                        "project_id": file_record.project_id,
-                        "file_name": file_record.original_name,
-                        "file_type": file_record.file_type,
-                        "stage": file_record.stage,
-                        "tags": file_record.tags or [],
-                        "upload_time": file_record.created_at.isoformat() if file_record.created_at else datetime.now().isoformat(),
-                        "content_length": len(content)
-                    }
-                    
-                    document_id = f"file_{file_record.id}"
-                    success = await ai_service.add_document_to_vector_db(
-                        content=content,
-                        file_id=file_record.id,
-                        file_name=file_record.original_name,
-                        project_id=file_record.project_id,
-                        metadata=metadata,
-                        access_level=file_record.access_level or "all_users",
-                        user_id=file_record.user_id
-                    )
-                    
-                    if success:
-                        # 标记文件已处理
-                        file_service.mark_file_processed(file_record.id)
-                        indexed_count += 1
-                        app_logger.info(f"🤖 文件索引成功: {file_record.original_name}")
-                    else:
-                        failed_count += 1
-                        app_logger.warning(f"🤖 文件索引失败: {file_record.original_name}")
+                    # 标记文件已处理
+                    await supabase_file_service.mark_file_processed(file_id)
+                    uploaded_count += 1
+                    app_logger.info(f"🤖 文件上传到RAG成功: {file_name}")
                 else:
-                    app_logger.warning(f"🤖 文件内容为空，跳过索引: {file_record.original_name}")
+                    failed_count += 1
+                    app_logger.warning(f"🤖 文件上传到RAG失败: {file_name}, 原因: {rag_result.message}")
                     
             except Exception as file_error:
                 failed_count += 1
-                app_logger.error(f"🤖 处理文件失败: {file_record.original_name}, 错误: {str(file_error)}")
+                app_logger.error(f"🤖 处理文件失败: {file_data.get('original_name', 'unknown')}, 错误: {str(file_error)}")
         
-        app_logger.info(f"🤖 批量索引完成，成功: {indexed_count}, 失败: {failed_count}")
+        app_logger.info(f"🤖 批量上传完成，成功: {uploaded_count}, 失败: {failed_count}")
         
         return {
-            "message": "批量索引完成",
-            "indexed_count": indexed_count,
+            "message": "批量上传完成",
+            "uploaded_count": uploaded_count,
             "failed_count": failed_count,
-            "total_processed": indexed_count + failed_count
+            "total_processed": uploaded_count + failed_count
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        app_logger.error(f"批量索引失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"批量索引失败: {str(e)}")
+        app_logger.error(f"批量上传失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量上传失败: {str(e)}")
 
 @router.get("/search-context")
 async def search_file_context(
     query: str,
     project_id: Optional[str] = None,
     limit: int = 5,
-    current_user: User = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    搜索文件上下文（用于AI问答）
+    搜索文件上下文（用于AI问答）- 使用外部RAG服务
     
     Args:
         query: 搜索查询
@@ -582,31 +643,31 @@ async def search_file_context(
         limit: 返回结果数量限制
     """
     try:
-        from app.services.ai_service import AIService
-        ai_service = AIService()
+        if not rag_client.is_available():
+            raise HTTPException(status_code=503, detail="RAG服务不可用")
         
-        # 搜索相似文档（带权限过滤）
-        results = await ai_service.search_similar_documents(
-            query=query,
+        # 确定collection名称
+        collection_name = f"project_{project_id}" if project_id else rag_client.config.collection_name
+        
+        # 使用外部RAG服务查询
+        rag_result = await rag_client.query(
+            query_text=query,
+            collection_name=collection_name,
             top_k=limit,
-            user_id=current_user.id,
-            is_admin=current_user.is_superuser
+            similarity_threshold=0.7
         )
-        
-        # 过滤项目相关结果
-        if project_id:
-            results = [
-                result for result in results
-                if result.get('metadata', {}).get('project_id') == project_id
-            ]
         
         return {
             "message": "搜索完成",
             "query": query,
             "project_id": project_id,
-            "results": results
+            "answer": rag_result.answer,
+            "sources": rag_result.sources,
+            "processing_time": rag_result.processing_time
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         app_logger.error(f"搜索文件上下文失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"搜索文件上下文失败: {str(e)}") 

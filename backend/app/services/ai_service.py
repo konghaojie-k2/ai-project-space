@@ -1,30 +1,16 @@
 """
 AI服务模块
-使用豆包Embedding + FAISS + LangChain最新架构，提供稳定的RAG系统
-参考：https://langchain-ai.github.io/langgraph/tutorials/rag/langgraph_agentic_rag/
+使用外部RAG服务提供完整的问答和文档搜索功能
+外部RAG服务已集成RAG检索+LLM生成，无需本地LLM
 """
 
 import os
-# 🔧 设置OpenMP环境变量，防止FAISS等库冲突 - 必须在AI库导入之前设置
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-import json
-import pickle
 import asyncio
-from typing import List, Dict, Any, Optional, AsyncGenerator, Union
-from pathlib import Path
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from loguru import logger
-import numpy as np
 from pydantic import BaseModel
 
-# LangChain最新导入
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_core.documents import Document
-from langchain_core.embeddings import Embeddings
-
-from .volcengine_client import volcengine_client
-from ..core.model_config import model_manager
+from .rag_client import rag_client
 
 # 配置日志
 logger.add("logs/ai_service.log", rotation="1 day", retention="7 days")
@@ -50,285 +36,16 @@ class DocumentSearchResult(BaseModel):
     relevance_score: float
     metadata: Dict[str, Any] = {}
 
-class VolcengineEmbeddings(Embeddings):
-    """豆包Embedding模型LangChain适配器"""
-    
-    def __init__(self):
-        """初始化豆包Embedding"""
-        self.client = volcengine_client
-        self.model = self.client.embedding_model
-        logger.info(f"✅ 初始化豆包Embedding模型: {self.model}")
-    
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """批量嵌入文档"""
-        try:
-            embeddings = []
-            for text in texts:
-                embedding = self.client.get_embedding(text)
-                embeddings.append(embedding)
-            logger.info(f"✅ 成功嵌入 {len(texts)} 个文档")
-            return embeddings
-        except Exception as e:
-            logger.error(f"文档嵌入失败: {e}")
-            # 返回零向量作为降级
-            return [[0.0] * 2560 for _ in texts]
-    
-    def embed_query(self, text: str) -> List[float]:
-        """嵌入查询文本"""
-        try:
-            embedding = self.client.get_embedding(text)
-            logger.info(f"✅ 成功嵌入查询文本")
-            return embedding
-        except Exception as e:
-            logger.error(f"查询嵌入失败: {e}")
-            return [0.0] * 2560
-    
-    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
-        """异步批量嵌入文档"""
-        return await asyncio.get_event_loop().run_in_executor(
-            None, self.embed_documents, texts
-        )
-    
-    async def aembed_query(self, text: str) -> List[float]:
-        """异步嵌入查询文本"""
-        return await asyncio.get_event_loop().run_in_executor(
-            None, self.embed_query, text
-        )
-
 class AIService:
-    """AI服务类 - 基于豆包Embedding + FAISS + LangChain最新架构"""
+    """AI服务类 - 使用外部RAG服务（已集成RAG检索+LLM生成）"""
     
     def __init__(self):
         """初始化AI服务"""
-        self.vector_store = None
-        self.embeddings_model = None
-        self.text_splitter = None
-        self.documents_metadata = {}  # 存储文档元数据
-        self.faiss_index_path = Path("../vector_storage")
-        self.faiss_index_path.mkdir(exist_ok=True)
-        
-        self.initialize_models()
-        self.initialize_vector_store()
-    
-    def initialize_models(self):
-        """初始化模型"""
-        try:
-            # 测试火山引擎连接
-            if volcengine_client.test_connection():
-                logger.info("✅ 火山引擎模型初始化成功")
-            else:
-                logger.warning("⚠️ 火山引擎连接失败，将使用模拟模式")
-                
-            # 初始化豆包embedding模型
-            try:
-                logger.info("🤖 正在初始化豆包Embedding模型...")
-                self.embeddings_model = VolcengineEmbeddings()
-                logger.info("✅ 豆包Embedding模型初始化成功")
-            except Exception as embed_error:
-                logger.error(f"豆包Embedding模型初始化失败: {embed_error}")
-                logger.warning("使用简单的文本匹配作为降级方案")
-                self.embeddings_model = None
-            
-            # 初始化文本分割器 - 使用最新参数
-            try:
-                self.text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200,
-                    length_function=len,
-                    separators=["\n\n", "\n", " ", ""]
-                )
-                logger.info("✅ 文本分割器初始化成功")
-            except Exception as splitter_error:
-                logger.error(f"文本分割器初始化失败: {splitter_error}")
-                self.text_splitter = None
-                
-        except Exception as e:
-            logger.error(f"模型初始化失败: {e}")
-            # 设置为None，后续方法会检查并使用降级方案
-            self.embeddings_model = None
-            self.text_splitter = None
-    
-    def initialize_vector_store(self):
-        """初始化FAISS向量存储"""
-        try:
-            # 如果embedding模型未初始化，跳过向量存储初始化
-            if not self.embeddings_model:
-                logger.warning("⚠️ Embedding模型未初始化，跳过向量存储初始化")
-                self.vector_store = None
-                return
-            
-            # 检查是否存在已保存的向量存储
-            faiss_file = self.faiss_index_path / "index.faiss"
-            pkl_file = self.faiss_index_path / "index.pkl"
-            metadata_file = self.faiss_index_path / "metadata.json"
-            
-            if faiss_file.exists() and pkl_file.exists():
-                # 加载现有的向量存储
-                try:
-                    self.vector_store = FAISS.load_local(
-                        str(self.faiss_index_path), 
-                        self.embeddings_model,
-                        allow_dangerous_deserialization=True
-                    )
-                    
-                    # 加载文档元数据
-                    if metadata_file.exists():
-                        with open(metadata_file, 'r', encoding='utf-8') as f:
-                            self.documents_metadata = json.load(f)
-                    
-                    logger.info(f"✅ 从本地加载FAISS向量存储成功")
-                    logger.info(f"  文档数量: {len(self.documents_metadata)}")
-                except Exception as load_error:
-                    logger.error(f"加载向量存储失败: {load_error}")
-                    # 创建新的向量存储
-                    self._create_new_vector_store()
-            else:
-                # 创建新的向量存储
-                self._create_new_vector_store()
-            
-            logger.info(f"向量存储路径: {self.faiss_index_path}")
-            
-        except Exception as e:
-            logger.error(f"向量存储初始化失败: {e}")
-            self.vector_store = None
-    
-    def _create_new_vector_store(self):
-        """创建新的向量存储"""
-        try:
-            # 用一个空文档初始化FAISS
-            initial_doc = Document(page_content="初始化文档", metadata={"type": "init"})
-            self.vector_store = FAISS.from_documents([initial_doc], self.embeddings_model)
-            logger.info("✅ 创建新的FAISS向量存储")
-        except Exception as e:
-            logger.error(f"创建向量存储失败: {e}")
-            self.vector_store = None
-    
-    def save_vector_store(self):
-        """保存向量存储到本地"""
-        try:
-            if self.vector_store:
-                self.vector_store.save_local(str(self.faiss_index_path))
-                
-                # 保存文档元数据
-                metadata_file = self.faiss_index_path / "metadata.json"
-                with open(metadata_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.documents_metadata, f, ensure_ascii=False, indent=2)
-                
-                logger.info("✅ 向量存储已保存到本地")
-        except Exception as e:
-            logger.error(f"保存向量存储失败: {e}")
-    
-    async def add_document_to_vector_db(
-        self, 
-        content: str, 
-        file_id: str, 
-        file_name: str,
-        project_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        access_level: str = "all_users",
-        user_id: Optional[int] = None
-    ) -> bool:
-        """添加文档到向量数据库"""
-        try:
-            if not self.vector_store or not self.text_splitter or not content.strip():
-                logger.warning("向量存储或文本分割器未初始化，跳过文档添加")
-                return False
-            
-            # 分割文档
-            chunks = self.text_splitter.split_text(content)
-            if not chunks:
-                return False
-            
-            # 为每个chunk创建Document对象
-            documents = []
-            for i, chunk in enumerate(chunks):
-                doc_metadata = {
-                    "file_id": file_id,
-                    "file_name": file_name,
-                    "chunk_index": i,
-                    "total_chunks": len(chunks),
-                    "project_id": project_id or "default",
-                    "access_level": access_level,  # 添加权限级别
-                    "user_id": str(user_id) if user_id else None  # 添加文件所有者
-                }
-                if metadata:
-                    doc_metadata.update(metadata)
-                
-                documents.append(Document(page_content=chunk, metadata=doc_metadata))
-            
-            # 添加文档到向量存储
-            self.vector_store.add_documents(documents)
-            
-            # 保存文档元数据
-            self.documents_metadata[file_id] = {
-                "file_name": file_name,
-                "project_id": project_id,
-                "chunks_count": len(chunks),
-                "metadata": metadata or {}
-            }
-            
-            # 异步保存
-            await asyncio.get_event_loop().run_in_executor(None, self.save_vector_store)
-            
-            logger.info(f"✅ 文档已添加到向量数据库: {file_name} ({len(chunks)} chunks)")
-            return True
-            
-        except Exception as e:
-            logger.error(f"添加文档到向量数据库失败: {e}")
-            return False
-    
-    async def remove_document_from_vector_db(self, file_id: str) -> bool:
-        """从向量数据库中删除文档"""
-        try:
-            if not self.vector_store or not file_id:
-                logger.warning("向量存储未初始化或文件ID为空，跳过文档删除")
-                return False
-            
-            # 检查是否存在该文件的向量
-            if file_id not in self.documents_metadata:
-                logger.warning(f"文件 {file_id} 在向量数据库中不存在")
-                return True  # 不存在也算删除成功
-            
-            # FAISS不支持直接按元数据删除，需要重建索引
-            # 获取所有文档并过滤掉要删除的文件
-            try:
-                # 获取所有存储的文档
-                all_docs = []
-                if hasattr(self.vector_store, 'docstore') and hasattr(self.vector_store.docstore, '_dict'):
-                    for doc_id, doc in self.vector_store.docstore._dict.items():
-                        if doc.metadata.get("file_id") != file_id:
-                            all_docs.append(doc)
-                
-                # 如果没有剩余文档，创建一个空的向量存储
-                if not all_docs:
-                    self._create_new_vector_store()
-                    logger.info(f"✅ 删除文件后向量存储为空，已重新初始化")
-                else:
-                    # 重建向量存储（不包含被删除的文档）
-                    self.vector_store = FAISS.from_documents(all_docs, self.embeddings_model)
-                    logger.info(f"✅ 重建向量存储，排除文件: {file_id}")
-                
-                # 删除元数据
-                if file_id in self.documents_metadata:
-                    del self.documents_metadata[file_id]
-                
-                # 异步保存
-                await asyncio.get_event_loop().run_in_executor(None, self.save_vector_store)
-                
-                logger.info(f"✅ 文档已从向量数据库中删除: {file_id}")
-                return True
-                
-            except Exception as rebuild_error:
-                logger.error(f"重建向量存储失败: {rebuild_error}")
-                # 如果重建失败，至少清除元数据
-                if file_id in self.documents_metadata:
-                    del self.documents_metadata[file_id]
-                    await asyncio.get_event_loop().run_in_executor(None, self.save_vector_store)
-                return False
-            
-        except Exception as e:
-            logger.error(f"从向量数据库删除文档失败: {e}")
-            return False
+        # 检查外部RAG服务可用性
+        if rag_client.is_available():
+            logger.info("✅ 外部RAG服务可用")
+        else:
+            logger.warning("⚠️ 外部RAG服务不可用")
     
     async def search_similar_documents(
         self, 
@@ -338,66 +55,61 @@ class AIService:
         user_id: Optional[int] = None,
         is_admin: bool = False
     ) -> List[DocumentSearchResult]:
-        """搜索相似文档 - 使用豆包Embedding"""
+        """
+        搜索相似文档 - 使用外部RAG服务
+        
+        Args:
+            query: 搜索查询
+            project_id: 项目ID
+            top_k: 返回结果数量
+            user_id: 用户ID（用于权限过滤）
+            is_admin: 是否为管理员
+            
+        Returns:
+            文档搜索结果列表
+        """
         try:
-            if not self.vector_store or not query.strip():
-                logger.warning("向量存储未初始化或查询为空")
+            if not query.strip():
+                logger.warning("查询为空")
                 return []
             
-            # 使用FAISS进行相似度搜索
-            # 获取更多结果以便权限过滤，确保最终能返回足够的结果
-            search_k = max(top_k * 3, 20)  # 至少搜索20个结果进行过滤
-            docs_with_scores = self.vector_store.similarity_search_with_score(
-                query, k=search_k
+            if not rag_client.is_available():
+                logger.warning("外部RAG服务不可用")
+                return []
+            
+            # 确定collection名称
+            collection_name = f"project_{project_id}" if project_id else rag_client.config.collection_name
+            
+            # 使用外部RAG服务查询
+            rag_result = await rag_client.query(
+                query_text=query,
+                collection_name=collection_name,
+                top_k=top_k,
+                similarity_threshold=0.7
             )
             
+            # 转换RAG响应为DocumentSearchResult格式
             results = []
-            seen_files = set()
-            
-            for doc, score in docs_with_scores:
-                # 项目过滤
-                if project_id and doc.metadata.get("project_id") != project_id:
-                    continue
+            for i, source in enumerate(rag_result.sources or []):
+                # 从source中提取信息
+                file_id = source.get("file_id") or source.get("document_id", f"doc_{i}")
+                file_name = source.get("file_name") or source.get("filename", "Unknown")
+                content = source.get("content") or source.get("text", "")
+                relevance_score = source.get("score", source.get("similarity", 0.8))
                 
-                file_id = doc.metadata.get("file_id", "unknown")
-                file_name = doc.metadata.get("file_name", "Unknown")
-                
-                # 文件权限过滤
+                # 权限过滤（如果提供了user_id）
                 if user_id is not None:
-                    # 检查用户是否有权限访问这个文件
-                    from app.services.file_service import FileService
-                    from app.core.database import SessionLocal
-                    
-                    db = SessionLocal()
-                    try:
-                        file_service = FileService(db)
-                        if not file_service.user_can_access_file(user_id, file_id, is_admin):
-                            continue  # 跳过无权限的文件
-                    finally:
-                        db.close()
-                
-                # 避免重复文件，每个文件只取最相关的chunk
-                if file_id in seen_files:
-                    continue
-                seen_files.add(file_id)
-                
-                # 计算相关性分数 (FAISS返回的是距离，转换为相似度)
-                # 豆包embedding使用余弦相似度，距离越小相似度越高
-                relevance_score = max(0.0, 1.0 - score / 2.0)
+                    from app.services.supabase_file_service import supabase_file_service
+                    if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_admin):
+                        continue  # 跳过无权限的文件
                 
                 results.append(DocumentSearchResult(
                     document_id=file_id,
                     file_name=file_name,
-                    content=doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
-                    relevance_score=relevance_score,
-                    metadata=doc.metadata
+                    content=content[:500] + "..." if len(content) > 500 else content,
+                    relevance_score=float(relevance_score),
+                    metadata=source.get("metadata", {})
                 ))
-                
-                if len(results) >= top_k:
-                    break
-            
-            # 按相关性分数排序
-            results.sort(key=lambda x: x.relevance_score, reverse=True)
             
             logger.info(f"🔍 搜索查询: {query[:50]}...")
             logger.info(f"📄 找到 {len(results)} 个相关文档")
@@ -417,40 +129,83 @@ class AIService:
         user_id: Optional[int] = None,
         is_admin: bool = False
     ) -> ChatResponse:
-        """聊天完成"""
+        """
+        聊天完成 - 使用外部RAG服务
+        
+        外部RAG服务已集成RAG检索+LLM生成，直接返回完整答案
+        """
         try:
-            # 构建系统提示
-            system_prompt = self._build_system_prompt(project_context)
+            if not rag_client.is_available():
+                return ChatResponse(
+                    content="抱歉，RAG服务暂时不可用，请稍后重试。",
+                    model="rag_service",
+                    usage={}
+                )
             
-            # 构建消息列表
-            api_messages = [
-                {"role": "system", "content": system_prompt}
-            ]
-            
-            for msg in messages:
-                # 处理字典格式和对象格式的消息
+            # 提取最后一条用户消息作为查询
+            query_text = ""
+            for msg in reversed(messages):
                 if isinstance(msg, dict):
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
                 else:
                     role = getattr(msg, "role", "user")
                     content = getattr(msg, "content", "")
-                    
-                api_messages.append({
-                    "role": role,
-                    "content": content
-                })
+                
+                if role == "user" and content.strip():
+                    query_text = content
+                    break
             
-            # 使用火山引擎生成回复
-            response_content = volcengine_client.chat_completion(api_messages)
+            if not query_text:
+                return ChatResponse(
+                    content="请提供您的问题。",
+                    model="rag_service",
+                    usage={}
+                )
+            
+            # 确定collection名称
+            project_id = None
+            if project_context:
+                if isinstance(project_context, str):
+                    if project_context.startswith("project_"):
+                        project_id = project_context.replace("project_", "")
+                    elif project_context.startswith("project-"):
+                        project_id = project_context.replace("project-", "")
+                    else:
+                        project_id = project_context
+            
+            collection_name = f"project_{project_id}" if project_id else rag_client.config.collection_name
+            
+            # 使用外部RAG服务查询（已包含RAG检索+LLM生成）
+            rag_result = await rag_client.query(
+                query_text=query_text,
+                collection_name=collection_name,
+                top_k=5,
+                similarity_threshold=0.7
+            )
+            
+            # 权限过滤sources（如果提供了user_id）
+            filtered_sources = []
+            if user_id is not None and rag_result.sources:
+                from app.services.supabase_file_service import supabase_file_service
+                for source in rag_result.sources:
+                    file_id = source.get("file_id") or source.get("document_id")
+                    if file_id:
+                        if await supabase_file_service.user_can_access_file(file_id, str(user_id), is_admin):
+                            filtered_sources.append(source)
+                    else:
+                        # 如果没有file_id，保留source
+                        filtered_sources.append(source)
+            else:
+                filtered_sources = rag_result.sources or []
             
             return ChatResponse(
-                content=response_content,
-                model=volcengine_client.llm_model,
+                content=rag_result.answer,
+                sources=filtered_sources,
+                model="rag_service",
                 usage={
-                    "prompt_tokens": len(str(api_messages)),
-                    "completion_tokens": len(response_content),
-                    "total_tokens": len(str(api_messages)) + len(response_content)
+                    "processing_time": rag_result.processing_time,
+                    "sources_count": len(filtered_sources)
                 }
             )
                 
@@ -470,194 +225,140 @@ class AIService:
         user_id: Optional[int] = None,
         is_admin: bool = False
     ):
-        """聊天完成 - 流式响应"""
+        """
+        聊天完成 - 流式响应
+        使用外部RAG服务的流式查询（如果支持），否则使用非流式查询+模拟流式输出
+        """
         try:
             logger.info(f"🔥 开始流式聊天完成，消息数量: {len(messages)}")
-            logger.info(f"🔥 消息类型: {[type(msg).__name__ for msg in messages]}")
-            logger.info(f"🔥 前3条消息内容: {messages[:3] if len(messages) <= 3 else messages[:3]}")
             
-            # 🤖 智能上下文增强：搜索相关项目文档（带权限过滤）
-            enhanced_context = await self._build_enhanced_context(messages, project_context, user_id, is_admin)
+            if not rag_client.is_available():
+                error_msg = "抱歉，RAG服务暂时不可用，请稍后重试。"
+                words = error_msg.split()
+                for i, word in enumerate(words):
+                    yield word if i == 0 else f" {word}"
+                    await asyncio.sleep(0.1)
+                return
             
-            # 构建系统提示
-            system_prompt = self._build_system_prompt(enhanced_context)
-            
-            # 构建消息列表
-            api_messages = [
-                {"role": "system", "content": system_prompt}
-            ]
-            
-            for msg in messages:
-                # 处理字典格式和对象格式的消息
+            # 提取最后一条用户消息作为查询
+            query_text = ""
+            for msg in reversed(messages):
                 if isinstance(msg, dict):
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
                 else:
                     role = getattr(msg, "role", "user")
                     content = getattr(msg, "content", "")
-                    
-                api_messages.append({
-                    "role": role,
-                    "content": content
-                })
+                
+                if role == "user" and content.strip():
+                    query_text = content
+                    break
             
-            # 使用真正的流式输出
+            if not query_text:
+                error_msg = "请提供您的问题。"
+                words = error_msg.split()
+                for i, word in enumerate(words):
+                    yield word if i == 0 else f" {word}"
+                    await asyncio.sleep(0.1)
+                return
+            
+            # 确定collection名称
+            project_id = None
+            if project_context:
+                if isinstance(project_context, str):
+                    if project_context.startswith("project_"):
+                        project_id = project_context.replace("project_", "")
+                    elif project_context.startswith("project-"):
+                        project_id = project_context.replace("project-", "")
+                    else:
+                        project_id = project_context
+            
+            collection_name = f"project_{project_id}" if project_id else rag_client.config.collection_name
+            
+            # 尝试使用流式查询
             try:
-                # 先尝试使用流式API
-                async for chunk in volcengine_client.chat_completion_stream(api_messages):
+                async for chunk in rag_client.stream_query(
+                    query_text=query_text,
+                    collection_name=collection_name,
+                    top_k=5,
+                    similarity_threshold=0.7
+                ):
                     if chunk:
                         yield chunk
-                        
+                return
             except Exception as stream_error:
-                logger.warning(f"流式API调用失败，使用非流式降级: {stream_error}")
-                # 降级到非流式API，然后模拟流式输出
-                try:
-                    response_content = volcengine_client.chat_completion(api_messages)
-                    
-                    # 智能的流式输出：按句子和代码块分割
-                    import asyncio
-                    import re
-                    
-                    # 按合理的单位分割文本（句子、代码块等）
-                    chunks = []
-                    
-                    # 首先处理代码块
-                    parts = re.split(r'(```[\s\S]*?```)', response_content)
-                    for part in parts:
-                        if part.startswith('```'):
-                            # 代码块整体输出
-                            chunks.append(part)
-                        else:
-                            # 普通文本按句子分割
-                            sentences = re.split(r'([.!?。！？\n]+)', part)
-                            for i in range(0, len(sentences), 2):
-                                if i < len(sentences):
-                                    sentence = sentences[i]
-                                    if i + 1 < len(sentences):
-                                        sentence += sentences[i + 1]
-                                    if sentence.strip():
-                                        chunks.append(sentence)
-                    
-                    # 流式输出chunks
-                    for chunk in chunks:
-                        if chunk.strip():
-                            yield chunk
-                            await asyncio.sleep(0.1)  # 适当的延时
-                            
-                except Exception as fallback_error:
-                    logger.error(f"降级流式输出也失败: {fallback_error}")
-                    # 使用简单的逐词输出作为最后的降级
-                    words = response_content.split() if 'response_content' in locals() else ["抱歉，", "服务", "暂时", "不可用。"]
-                    for i, word in enumerate(words):
-                        if i == 0:
-                            yield word
-                        else:
-                            yield f" {word}"
-                        await asyncio.sleep(0.08)
-                    
-            except Exception as ai_error:
-                logger.warning(f"AI服务流式调用失败，使用降级方案: {ai_error}")
-                # 降级处理 - 生成智能回复并流式输出
-                last_message_content = ""
-                if messages:
-                    last_msg = messages[-1]
-                    if isinstance(last_msg, dict):
-                        last_message_content = last_msg.get("content", "")
+                logger.warning(f"流式查询失败，使用非流式降级: {stream_error}")
+            
+            # 降级：使用非流式查询，然后模拟流式输出
+            rag_result = await rag_client.query(
+                query_text=query_text,
+                collection_name=collection_name,
+                top_k=5,
+                similarity_threshold=0.7
+            )
+            
+            # 权限过滤sources（如果提供了user_id）
+            if user_id is not None and rag_result.sources:
+                from app.services.supabase_file_service import supabase_file_service
+                filtered_sources = []
+                for source in rag_result.sources:
+                    file_id = source.get("file_id") or source.get("document_id")
+                    if file_id:
+                        if await supabase_file_service.user_can_access_file(file_id, str(user_id), is_admin):
+                            filtered_sources.append(source)
                     else:
-                        last_message_content = getattr(last_msg, "content", "")
-                        
-                fallback_response = self._generate_markdown_fallback_response(
-                    last_message_content, 
-                    project_context
-                )
-                
-                words = fallback_response.split()
-                for i, word in enumerate(words):
-                    if i == 0:
-                        yield word
-                    else:
-                        yield f" {word}"
-                    await asyncio.sleep(0.08)  # 稍快一些的输出速度
+                        filtered_sources.append(source)
+            
+            # 智能的流式输出：按句子和代码块分割
+            import re
+            
+            answer = rag_result.answer
+            chunks = []
+            
+            # 首先处理代码块
+            parts = re.split(r'(```[\s\S]*?```)', answer)
+            for part in parts:
+                if part.startswith('```'):
+                    # 代码块整体输出
+                    chunks.append(part)
+                else:
+                    # 普通文本按句子分割
+                    sentences = re.split(r'([.!?。！？\n]+)', part)
+                    for i in range(0, len(sentences), 2):
+                        if i < len(sentences):
+                            sentence = sentences[i]
+                            if i + 1 < len(sentences):
+                                sentence += sentences[i + 1]
+                            if sentence.strip():
+                                chunks.append(sentence)
+            
+            # 流式输出chunks
+            for chunk in chunks:
+                if chunk.strip():
+                    yield chunk
+                    await asyncio.sleep(0.05)  # 适当的延时
                     
         except Exception as e:
             logger.error(f"流式聊天完成失败: {e}")
-            logger.error(f"异常详情: {type(e).__name__}: {str(e)}")
             import traceback
             logger.error(f"完整堆栈: {traceback.format_exc()}")
             
-            # 发送错误信息 - 但实际上应该发送正常回复
-            # 临时修复：直接发送一个友好的回复
-            friendly_response = "你好！我是您的AI助手。虽然当前遇到了一些技术问题，但我很乐意为您提供帮助。请问有什么可以为您做的吗？"
-            
+            # 发送友好的错误回复
+            friendly_response = "抱歉，AI服务暂时遇到问题。请稍后重试。"
             words = friendly_response.split()
             for i, word in enumerate(words):
-                if i == 0:
-                    yield word
-                else:
-                    yield f" {word}"
-                import asyncio
+                yield word if i == 0 else f" {word}"
                 await asyncio.sleep(0.1)
     
     async def _build_enhanced_context(self, messages: List[ChatMessage], project_context: Optional[str] = None, user_id: Optional[int] = None, is_admin: bool = False) -> str:
-        """构建增强上下文：基于用户消息搜索相关项目文档"""
-        try:
-            if not messages:
-                return project_context or ""
-            
-            # 获取最后一条用户消息用于搜索
-            last_message = messages[-1] if messages else None
-            if not last_message:
-                return project_context or ""
-            
-            # 提取查询内容
-            if isinstance(last_message, dict):
-                query = last_message.get("content", "")
-            else:
-                query = getattr(last_message, "content", "")
-            
-            if not query.strip():
-                return project_context or ""
-            
-            logger.info(f"🤖 开始智能上下文搜索，查询: {query[:100]}...")
-            
-            # 从project_context中提取项目ID（如果有的话）
-            project_id = project_context if project_context and project_context.startswith("project-") else None
-            
-            # 搜索相关文档（带权限过滤）
-            relevant_docs = await self.search_similar_documents(
-                query=query,
-                project_id=project_id,
-                user_id=user_id,
-                is_admin=is_admin
-            )
-            
-            # 构建增强上下文
-            context_parts = []
-            
-            if project_context:
-                context_parts.append(f"项目背景: {project_context}")
-            
-            if relevant_docs:
-                context_parts.append("📚 相关项目文档:")
-                for i, doc in enumerate(relevant_docs[:3], 1):
-                    file_name = doc.file_name
-                    content_preview = doc.content[:200] + ("..." if len(doc.content) > 200 else "")
-                    relevance = doc.relevance_score
-                    
-                    context_parts.append(f"""
-{i}. 文件: {file_name} (相关性: {relevance:.2f})
-   内容摘要: {content_preview}""")
-                
-                logger.info(f"🤖 找到 {len(relevant_docs)} 个相关文档，已添加到上下文")
-            else:
-                logger.info("🤖 未找到相关项目文档")
-            
-            enhanced_context = "\n".join(context_parts)
-            return enhanced_context
-            
-        except Exception as e:
-            logger.error(f"构建增强上下文失败: {e}")
-            return project_context or ""
+        """
+        构建增强上下文 - 已废弃
+        
+        外部RAG服务已自动处理上下文检索，此方法不再需要
+        保留用于兼容性
+        """
+        # 外部RAG服务会自动处理上下文检索，直接返回项目上下文即可
+        return project_context or ""
     
     def _generate_markdown_fallback_response(self, question: str, project_context: Optional[str] = None) -> str:
         """生成Markdown格式的降级回复 - 用于测试流式渲染"""
@@ -910,29 +611,14 @@ function handleQuestion(question) {{
         return base_prompt
     
     async def process_project_files(self, project_id: str, file_paths: List[str]) -> bool:
-        """处理项目文件"""
-        try:
-            for file_path in file_paths:
-                content = await self._read_file_content(Path(file_path))
-                if content:
-                    metadata = {
-                        "project_id": project_id,
-                        "file_path": file_path,
-                        "file_type": Path(file_path).suffix,
-                        "processed_at": str(asyncio.get_event_loop().time())
-                    }
-                    
-                    document_id = f"{project_id}_{Path(file_path).name}"
-                    await self.add_document_to_vector_db(content, document_id, Path(file_path).name, project_id, metadata)
-            
-            logger.info(f"项目文件处理完成: {project_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"处理项目文件失败: {e}")
-            return False
+        """
+        处理项目文件 - 已废弃，文件处理由外部RAG服务完成
+        此方法保留用于兼容性
+        """
+        logger.warning("process_project_files 已废弃，文件处理应由外部RAG服务完成")
+        return False
     
-    async def _read_file_content(self, file_path: Path) -> Optional[str]:
+    async def _read_file_content(self, file_path) -> Optional[str]:
         """读取文件内容"""
         try:
             if not file_path.exists():
@@ -971,27 +657,33 @@ function handleQuestion(question) {{
     def get_model_info(self) -> Dict[str, Any]:
         """获取模型信息"""
         return {
-            "llm_model": volcengine_client.llm_model,
-            "embedding_model": volcengine_client.embedding_model,
-            "api_url": volcengine_client.base_url,
-            "vector_db": "FAISS + 豆包Embedding" if self.vector_store else "未初始化"
+            "service_type": "外部RAG服务（已集成RAG检索+LLM生成）",
+            "rag_service_available": rag_client.is_available(),
+            "rag_endpoint": rag_client.base_url if rag_client.is_available() else None,
+            "collection_name": rag_client.config.collection_name if rag_client.is_available() else None
         }
 
     async def health_check(self) -> dict:
         """健康检查"""
         try:
-            # 简单测试向量数据库连接
-            if hasattr(self, 'vectorizer') and self.vectorizer:
-                status = "healthy"
+            # 检查外部RAG服务
+            rag_healthy = rag_client.is_available()
+            
+            if rag_healthy:
+                # 尝试执行健康检查
+                try:
+                    health_info = await rag_client.health_check()
+                    status = health_info.get("status", "healthy") if isinstance(health_info, dict) else "healthy"
+                except:
+                    status = "healthy"  # 如果健康检查失败，但服务可用，仍标记为healthy
             else:
-                status = "degraded"
+                status = "unhealthy"
                 
             return {
                 "status": status,
-                "message": "AI服务运行正常" if status == "healthy" else "AI服务部分功能降级",
+                "message": "AI服务运行正常" if status == "healthy" else "RAG服务不可用",
                 "components": {
-                    "vectorizer": "healthy" if hasattr(self, 'vectorizer') and self.vectorizer else "unhealthy",
-                    "embeddings": "healthy" if hasattr(self, 'embeddings') and self.embeddings else "unhealthy"
+                    "rag_service": "healthy" if rag_healthy else "unhealthy"
                 }
             }
         except Exception as e:
@@ -999,8 +691,7 @@ function handleQuestion(question) {{
                 "status": "unhealthy",
                 "message": f"AI服务异常: {str(e)}",
                 "components": {
-                    "vectorizer": "unknown",
-                    "embeddings": "unknown"
+                    "rag_service": "unknown"
                 }
             }
 

@@ -183,9 +183,9 @@ export default function ProjectsPage() {
     setEditForm({ name: '', description: '', stage: '', status: 'active' })
   }
 
-  const handleCreateProject = () => {
+  const handleCreateProject = async () => {
     if (createForm.name.trim()) {
-      projectSync.createProject({
+      await projectSync.createProject({
         name: createForm.name.trim(),
         description: createForm.description.trim(),
         stage: createForm.stage,

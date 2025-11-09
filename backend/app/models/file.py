@@ -5,7 +5,7 @@ from typing import List, Optional
 import uuid
 import enum
 
-from app.core.database import Base
+from app.models.base import Base
 
 class FileRecord(Base):
     """文件记录模型"""

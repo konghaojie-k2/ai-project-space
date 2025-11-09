@@ -37,12 +37,12 @@ timeout /t 2 /nobreak >nul
 
 REM 启动后端服务
 echo 🌟 启动FastAPI服务器...
-echo 📍 服务地址: http://localhost:8000
-echo 📖 API文档: http://localhost:8000/docs
+echo 📍 服务地址: http://localhost:8001
+echo 📖 API文档: http://localhost:8001/docs
 echo 🛑 按 Ctrl+C 停止服务
 echo.
 
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
 
 REM 返回根目录
 cd ..

@@ -290,7 +290,7 @@ export default function WorkspacePage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
                             <a
-                              href={`http://localhost:8000/api/v1/files/${file.id}/download`}
+                              href={`${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8001/api/v1'}/files/${file.id}/download`}
                               className="text-blue-600 hover:text-blue-900"
                               target="_blank"
                               rel="noopener noreferrer"

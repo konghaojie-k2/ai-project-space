@@ -1,114 +1,115 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
 认证相关的API端点
+基于Supabase Auth的用户认证和授权
 """
 
-from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 from loguru import logger
 
-from app.core.database import get_db
-from app.services.auth_service import auth_service
+from app.services.supabase_auth import supabase_auth_service
 from app.schemas.auth import (
     LoginRequest, RegisterRequest, TokenResponse, RefreshTokenRequest,
     ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest,
     UserResponse, UserUpdate, MessageResponse
 )
-from typing import List, Optional
-from app.models.user import User
+from app.dependencies.auth import (
+    get_current_user, get_current_active_user, get_current_superuser,
+    RateLimitAuth
+)
+
+# 重新导出依赖函数，方便其他模块使用
+__all__ = [
+    'get_current_user',
+    'get_current_active_user', 
+    'get_current_superuser',
+    'get_current_admin_user',  # 别名，指向superuser
+    'RateLimitAuth'
+]
+
+# 为兼容性创建别名
+get_current_admin_user = get_current_superuser
 
 
 router = APIRouter()
-security = HTTPBearer()
-
-
-def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    db: Session = Depends(get_db)
-) -> User:
-    """获取当前用户"""
-    token = credentials.credentials
-    payload = auth_service.verify_token(token, "access")
-    
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的访问令牌",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="令牌中缺少用户ID",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    user = auth_service.get_user_by_id(db, user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户不存在",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户账户已被禁用",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    return user
-
-
-def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """获取当前管理员用户"""
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="权限不足，需要管理员权限"
-        )
-    return current_user
 
 
 @router.post("/login", response_model=TokenResponse, summary="用户登录")
 async def login(
     login_data: LoginRequest,
-    db: Session = Depends(get_db)
+    _=Depends(RateLimitAuth)
 ):
     """
     用户登录
-    
+
     - **email**: 用户邮箱
     - **password**: 用户密码
     """
     try:
-        # 验证用户凭据
-        user = auth_service.authenticate_user(db, login_data.email, login_data.password)
-        if not user:
+        # 使用Supabase认证用户
+        auth_result = await supabase_auth_service.authenticate_user(
+            login_data.email,
+            login_data.password
+        )
+
+        if not auth_result:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="邮箱或密码错误",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        if not user.is_active:
+
+        user = auth_result.get('user')
+        access_token = auth_result.get('access_token')
+        refresh_token = auth_result.get('refresh_token')
+
+        # 获取完整用户信息
+        full_user = await supabase_auth_service.get_current_user(access_token)
+        if not full_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="用户账户已被禁用",
+                detail="用户信息获取失败",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        # 创建令牌响应
-        token_response = auth_service.create_token_response(user)
-        
-        logger.info(f"用户登录成功: {user.username} ({user.email})")
+
+        # 处理username：如果为None，使用email的前缀作为默认值
+        username = full_user.get('username')
+        if not username:
+            email = full_user.get('email', '')
+            username = email.split('@')[0] if email else 'user'
+            logger.warning(f"用户 {email} 没有username，使用email前缀: {username}")
+
+        # 创建响应
+        token_response = TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=auth_result.get('expires_in', 7200),
+            user={
+                "id": full_user.get('id'),
+                "email": full_user.get('email'),
+                "username": username,
+                "full_name": full_user.get('full_name'),
+                "avatar_url": full_user.get('avatar_url'),
+                "bio": full_user.get('bio'),
+                "phone": full_user.get('phone'),
+                "department": full_user.get('department'),
+                "position": full_user.get('position'),
+                "is_active": full_user.get('is_active', True),
+                "is_verified": full_user.get('email_confirmed', False) or full_user.get('email_confirmed_at') is not None,
+                "is_superuser": full_user.get('is_superuser', False),
+                "created_at": full_user.get('created_at') or datetime.utcnow(),
+                "updated_at": full_user.get('updated_at') or datetime.utcnow()
+            }
+        )
+
+        logger.info(f"用户登录成功: {full_user.get('username', full_user.get('email'))}")
         return token_response
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -119,46 +120,53 @@ async def login(
         )
 
 
-@router.post("/register", response_model=TokenResponse, summary="用户注册")
+@router.post("/register", response_model=MessageResponse, summary="用户注册")
 async def register(
     register_data: RegisterRequest,
-    db: Session = Depends(get_db)
+    _=Depends(RateLimitAuth)
 ):
     """
     用户注册
-    
+
     - **username**: 用户名 (3-50字符)
     - **email**: 邮箱地址
     - **password**: 密码 (至少6字符)
     - **full_name**: 全名 (可选)
     """
     try:
-        # 创建用户
-        from app.schemas.auth import UserCreate
-        user_create = UserCreate(
-            username=register_data.username,
-            email=register_data.email,
-            password=register_data.password
+        # 使用Supabase注册用户
+        user_metadata = {
+            "username": register_data.username
+        }
+
+        if register_data.full_name:
+            user_metadata["full_name"] = register_data.full_name
+
+        auth_result = await supabase_auth_service.register_user(
+            register_data.email,
+            register_data.password,
+            user_metadata
         )
-        
-        user = auth_service.create_user(db, user_create)
-        
-        # 创建令牌响应
-        token_response = auth_service.create_token_response(user)
-        
-        logger.info(f"用户注册成功: {user.username} ({user.email})")
-        return token_response
-        
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+
+        if not auth_result:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="用户注册失败，邮箱可能已存在"
+            )
+
+        user = auth_result.get('user')
+
+        logger.info(f"用户注册成功: {register_data.username} ({register_data.email})")
+
+        # 注册成功后需要邮箱验证，不返回token
+        return MessageResponse(
+            message="注册成功！请检查邮箱进行验证后登录"
         )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error(f"注册失败: {str(e)}")
-        logger.error(f"详细错误信息: {error_details}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="注册过程中发生错误"
@@ -168,53 +176,66 @@ async def register(
 @router.post("/refresh", response_model=TokenResponse, summary="刷新令牌")
 async def refresh_token(
     refresh_data: RefreshTokenRequest,
-    db: Session = Depends(get_db)
+    _=Depends(RateLimitAuth)
 ):
     """
     刷新访问令牌
-    
+
     - **refresh_token**: 刷新令牌
     """
     try:
-        # 验证刷新令牌
-        payload = auth_service.verify_token(refresh_data.refresh_token, "refresh")
-        if payload is None:
+        # 使用Supabase刷新令牌
+        token_result = await supabase_auth_service.refresh_token(
+            refresh_data.refresh_token
+        )
+
+        if not token_result:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="无效的刷新令牌",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        user_id = payload.get("sub")
-        if user_id is None:
+
+        access_token = token_result.get('access_token')
+        refresh_token = token_result.get('refresh_token')
+        expires_in = token_result.get('expires_in', 7200)
+
+        # �新令牌获取用户信息
+        full_user = await supabase_auth_service.get_current_user(access_token)
+        if not full_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="令牌中缺少用户ID",
+                detail="令牌刷新后用户信息获取失败",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        # 获取用户
-        user = auth_service.get_user_by_id(db, user_id)
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="用户不存在",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="用户账户已被禁用",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # 创建新的令牌响应
-        token_response = auth_service.create_token_response(user)
-        
-        logger.info(f"令牌刷新成功: {user.username}")
+
+        # 创建响应
+        token_response = TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=expires_in,
+            user={
+                "id": full_user.get('id'),
+                "email": full_user.get('email'),
+                "username": full_user.get('username'),
+                "full_name": full_user.get('full_name'),
+                "avatar_url": full_user.get('avatar_url'),
+                "bio": full_user.get('bio'),
+                "phone": full_user.get('phone'),
+                "department": full_user.get('department'),
+                "position": full_user.get('position'),
+                "is_active": full_user.get('is_active', True),
+                "is_verified": full_user.get('email_confirmed', False),
+                "is_superuser": full_user.get('is_superuser', False),
+                "created_at": full_user.get('created_at'),
+                "updated_at": full_user.get('updated_at')
+            }
+        )
+
+        logger.info(f"令牌刷新成功: {full_user.get('username', full_user.get('email'))}")
         return token_response
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -227,83 +248,96 @@ async def refresh_token(
 
 @router.post("/logout", response_model=MessageResponse, summary="用户登出")
 async def logout(
-    current_user: User = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     用户登出
-    
-    注意：由于使用JWT，实际的令牌失效需要在客户端处理
+
+    注意：Supabase会自动处理令牌失效
     """
-    logger.info(f"用户登出: {current_user.username}")
+    logger.info(f"用户登出: {current_user.get('username', current_user.get('email'))}")
     return MessageResponse(message="登出成功")
 
 
-@router.get("/profile", response_model=UserResponse, summary="获取用户信息")
+@router.get("/profile", response_model=dict, summary="获取用户信息")
 async def get_profile(
-    current_user: User = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     获取当前用户信息
     """
-    return UserResponse(
-        id=str(current_user.id),
-        username=current_user.username,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        avatar_url=current_user.avatar_url,
-        bio=current_user.bio,
-        phone=current_user.phone,
-        department=current_user.department,
-        position=current_user.position,
-        is_active=current_user.is_active,
-        is_verified=current_user.is_verified,
-        is_superuser=current_user.is_superuser,
-        created_at=current_user.created_at,
-        updated_at=current_user.updated_at
-    )
+    return {
+        "id": current_user.get('id'),
+        "username": current_user.get('username'),
+        "email": current_user.get('email'),
+        "full_name": current_user.get('full_name'),
+        "avatar_url": current_user.get('avatar_url'),
+        "bio": current_user.get('bio'),
+        "phone": current_user.get('phone'),
+        "department": current_user.get('department'),
+        "position": current_user.get('position'),
+        "is_active": current_user.get('is_active', True),
+        "is_verified": current_user.get('email_confirmed', False),
+        "is_superuser": current_user.get('is_superuser', False),
+        "created_at": current_user.get('created_at'),
+        "updated_at": current_user.get('updated_at')
+    }
 
 
-@router.patch("/profile", response_model=UserResponse, summary="更新用户信息")
+@router.patch("/profile", response_model=dict, summary="更新用户信息")
 async def update_profile(
     user_update: UserUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     更新当前用户信息
     """
     try:
-        # 更新用户信息
+        # 准备更新数据
         update_data = user_update.model_dump(exclude_unset=True)
-        
-        for field, value in update_data.items():
-            if hasattr(current_user, field):
-                setattr(current_user, field, value)
-        
-        db.commit()
-        db.refresh(current_user)
-        
-        logger.info(f"用户信息更新成功: {current_user.username}")
-        
-        return UserResponse(
-            id=str(current_user.id),
-            username=current_user.username,
-            email=current_user.email,
-            full_name=current_user.full_name,
-            avatar_url=current_user.avatar_url,
-            bio=current_user.bio,
-            phone=current_user.phone,
-            department=current_user.department,
-            position=current_user.position,
-            is_active=current_user.is_active,
-            is_verified=current_user.is_verified,
-            is_superuser=current_user.is_superuser,
-            created_at=current_user.created_at,
-            updated_at=current_user.updated_at
+        user_id = current_user.get('id')
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="用户ID获取失败"
+            )
+
+        # 使用Supabase更新用户资料
+        updated_profile = await supabase_auth_service.update_user_profile(
+            user_id,
+            update_data
         )
-        
+
+        if not updated_profile:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="更新用户信息失败"
+            )
+
+        logger.info(f"用户信息更新成功: {current_user.get('username', current_user.get('email'))}")
+
+        # 返回更新后的用户信息
+        return {
+            "id": updated_profile.get('id', user_id),
+            "username": updated_profile.get('username', current_user.get('username')),
+            "email": current_user.get('email'),  # 邮箱通常不能通过此方法更改
+            "full_name": updated_profile.get('full_name', current_user.get('full_name')),
+            "avatar_url": updated_profile.get('avatar_url', current_user.get('avatar_url')),
+            "bio": updated_profile.get('bio', current_user.get('bio')),
+            "phone": updated_profile.get('phone', current_user.get('phone')),
+            "department": updated_profile.get('department', current_user.get('department')),
+            "position": updated_profile.get('position', current_user.get('position')),
+            "is_active": current_user.get('is_active', True),
+            "is_verified": current_user.get('email_confirmed', False),
+            "is_superuser": current_user.get('is_superuser', False),
+            "created_at": current_user.get('created_at'),
+            "updated_at": updated_profile.get('updated_at', current_user.get('updated_at'))
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        db.rollback()
         logger.error(f"用户信息更新失败: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -314,29 +348,31 @@ async def update_profile(
 @router.post("/change-password", response_model=MessageResponse, summary="修改密码")
 async def change_password(
     password_data: ChangePasswordRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     修改用户密码
-    
+
     - **current_password**: 当前密码
     - **new_password**: 新密码 (至少6字符)
     """
     try:
-        # 验证当前密码
-        if not auth_service.verify_password(password_data.current_password, current_user.hashed_password):
+        # 使用Supabase修改密码
+        success = await supabase_auth_service.change_password(
+            current_user,
+            password_data.current_password,
+            password_data.new_password
+        )
+
+        if not success:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="当前密码错误"
+                detail="当前密码错误或密码修改失败"
             )
-        
-        # 更新密码
-        auth_service.update_user_password(db, current_user, password_data.new_password)
-        
-        logger.info(f"用户密码修改成功: {current_user.username}")
+
+        logger.info(f"用户密码修改成功: {current_user.get('username', current_user.get('email'))}")
         return MessageResponse(message="密码修改成功")
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -350,29 +386,25 @@ async def change_password(
 @router.post("/forgot-password", response_model=MessageResponse, summary="忘记密码")
 async def forgot_password(
     forgot_data: ForgotPasswordRequest,
-    db: Session = Depends(get_db)
+    _=Depends(RateLimitAuth)
 ):
     """
     忘记密码 - 发送重置邮件
-    
+
     - **email**: 用户邮箱
-    
-    注意：这是一个模拟实现，实际应用中需要集成邮件服务
     """
     try:
-        # 检查用户是否存在
-        user = auth_service.get_user_by_email(db, forgot_data.email)
-        
-        # 无论用户是否存在，都返回成功消息（安全考虑）
-        logger.info(f"忘记密码请求: {forgot_data.email}")
-        
-        # TODO: 实际实现中应该：
-        # 1. 生成重置令牌
-        # 2. 保存到数据库或缓存
-        # 3. 发送重置邮件
-        
-        return MessageResponse(message="如果该邮箱存在，重置链接已发送到您的邮箱")
-        
+        # 使用Supabase发送密码重置邮件
+        success = await supabase_auth_service.reset_password(forgot_data.email)
+
+        if success:
+            logger.info(f"忘记密码邮件发送成功: {forgot_data.email}")
+            return MessageResponse(message="重置密码邮件已发送到您的邮箱")
+        else:
+            # 无论用户是否存在，都返回成功消息（安全考虑）
+            logger.info(f"忘记密码请求: {forgot_data.email}")
+            return MessageResponse(message="如果该邮箱存在，重置链接已发送到您的邮箱")
+
     except Exception as e:
         logger.error(f"忘记密码处理失败: {str(e)}")
         raise HTTPException(
@@ -381,31 +413,23 @@ async def forgot_password(
         )
 
 
+# 重置密码功能已内置在Supabase的邮件链接中，无需单独实现
 @router.post("/reset-password", response_model=MessageResponse, summary="重置密码")
-async def reset_password(
-    reset_data: ResetPasswordRequest,
-    db: Session = Depends(get_db)
-):
+async def reset_password(reset_data: ResetPasswordRequest):
     """
     重置密码
-    
-    - **token**: 重置令牌
+
+    - **token**: 重置令牌（从邮件链接中获取）
     - **new_password**: 新密码 (至少6字符)
-    
-    注意：这是一个模拟实现，实际应用中需要验证重置令牌
+
+    注意：实际的重置密码操作在Supabase的邮件链接中完成
     """
     try:
-        # TODO: 实际实现中应该：
-        # 1. 验证重置令牌
-        # 2. 检查令牌是否过期
-        # 3. 获取对应的用户
-        # 4. 更新密码
-        # 5. 删除或标记令牌为已使用
-        
         logger.info(f"密码重置请求: token={reset_data.token[:10]}...")
-        
-        return MessageResponse(message="密码重置成功，请使用新密码登录")
-        
+
+        # Supabase的重置密码通常通过邮件链接完成，这里提供一个占位符
+        return MessageResponse(message="请使用邮件中的链接重置密码")
+
     except Exception as e:
         logger.error(f"密码重置失败: {str(e)}")
         raise HTTPException(
@@ -414,313 +438,5 @@ async def reset_password(
         )
 
 
-# 用户管理接口（管理员功能）
-
-@router.get("/users", response_model=List[UserResponse], summary="获取所有用户列表")
-async def list_users(
-    skip: int = 0,
-    limit: int = 100,
-    search: Optional[str] = None,
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    获取所有用户列表（管理员权限）
-    
-    - **skip**: 跳过的记录数
-    - **limit**: 返回的记录数限制
-    - **search**: 搜索用户名或邮箱
-    """
-    try:
-        query = db.query(User)
-        
-        if search:
-            query = query.filter(
-                (User.username.contains(search)) | 
-                (User.email.contains(search))
-            )
-        
-        users = query.offset(skip).limit(limit).all()
-        
-        return [
-            UserResponse(
-                id=str(user.id),
-                username=user.username,
-                email=user.email,
-                full_name=user.full_name,
-                avatar_url=user.avatar_url,
-                bio=user.bio,
-                phone=user.phone,
-                department=user.department,
-                position=user.position,
-                is_active=user.is_active,
-                is_verified=user.is_verified,
-                is_superuser=user.is_superuser,
-                created_at=user.created_at,
-                updated_at=user.updated_at
-            )
-            for user in users
-        ]
-        
-    except Exception as e:
-        logger.error(f"获取用户列表失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="获取用户列表时发生错误"
-        )
-
-
-@router.get("/users/{user_id}", response_model=UserResponse, summary="获取指定用户信息")
-async def get_user_by_id(
-    user_id: int,
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    获取指定用户的详细信息（管理员权限）
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
-        
-        return UserResponse(
-            id=str(user.id),
-            username=user.username,
-            email=user.email,
-            full_name=user.full_name,
-            avatar_url=user.avatar_url,
-            bio=user.bio,
-            phone=user.phone,
-            department=user.department,
-            position=user.position,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            is_superuser=user.is_superuser,
-            created_at=user.created_at,
-            updated_at=user.updated_at
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取用户信息失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="获取用户信息时发生错误"
-        )
-
-
-@router.patch("/users/{user_id}", response_model=UserResponse, summary="更新用户信息")
-async def update_user_by_admin(
-    user_id: int,
-    user_update: UserUpdate,
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    管理员更新用户信息
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
-        
-        # 更新用户信息
-        update_data = user_update.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            if hasattr(user, field):
-                setattr(user, field, value)
-        
-        db.commit()
-        db.refresh(user)
-        
-        logger.info(f"管理员 {current_admin.username} 更新了用户 {user.username} 的信息")
-        
-        return UserResponse(
-            id=str(user.id),
-            username=user.username,
-            email=user.email,
-            full_name=user.full_name,
-            avatar_url=user.avatar_url,
-            bio=user.bio,
-            phone=user.phone,
-            department=user.department,
-            position=user.position,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            is_superuser=user.is_superuser,
-            created_at=user.created_at,
-            updated_at=user.updated_at
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"更新用户信息失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="更新用户信息时发生错误"
-        )
-
-
-@router.patch("/users/{user_id}/status", response_model=MessageResponse, summary="更新用户状态")
-async def update_user_status(
-    user_id: int,
-    is_active: bool,
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    管理员启用/禁用用户账户
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
-        
-        # 不能禁用自己
-        if user.id == current_admin.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="不能修改自己的账户状态"
-            )
-        
-        user.is_active = is_active
-        db.commit()
-        
-        action = "启用" if is_active else "禁用"
-        logger.info(f"管理员 {current_admin.username} {action}了用户 {user.username}")
-        
-        return MessageResponse(message=f"用户账户已{action}")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"更新用户状态失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="更新用户状态时发生错误"
-        )
-
-
-@router.patch("/users/{user_id}/admin", response_model=MessageResponse, summary="设置/取消管理员权限")
-async def update_user_admin_status(
-    user_id: int,
-    is_superuser: bool,
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    管理员设置或取消用户的管理员权限
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
-        
-        # 不能修改自己的管理员权限
-        if user.id == current_admin.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="不能修改自己的管理员权限"
-            )
-        
-        user.is_superuser = is_superuser
-        db.commit()
-        
-        action = "设置" if is_superuser else "取消"
-        logger.info(f"管理员 {current_admin.username} {action}了用户 {user.username} 的管理员权限")
-        
-        return MessageResponse(message=f"用户管理员权限已{action}")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"更新管理员权限失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="更新管理员权限时发生错误"
-        )
-
-
-@router.patch("/users/{user_id}/verify", response_model=MessageResponse, summary="验证用户邮箱")
-async def verify_user_email(
-    user_id: int,
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    管理员手动验证用户邮箱
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
-        
-        user.is_verified = True
-        db.commit()
-        
-        logger.info(f"管理员 {current_admin.username} 验证了用户 {user.username} 的邮箱")
-        
-        return MessageResponse(message=f"用户 {user.username} 邮箱已验证")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"验证用户邮箱失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="验证用户邮箱时发生错误"
-        )
-
-
-@router.get("/users/stats/summary", summary="获取用户统计信息")
-async def get_user_stats(
-    current_admin: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    获取用户统计信息（管理员权限）
-    """
-    try:
-        total_users = db.query(User).count()
-        active_users = db.query(User).filter(User.is_active == True).count()
-        verified_users = db.query(User).filter(User.is_verified == True).count()
-        admin_users = db.query(User).filter(User.is_superuser == True).count()
-        
-        return {
-            "total_users": total_users,
-            "active_users": active_users,
-            "inactive_users": total_users - active_users,
-            "verified_users": verified_users,
-            "unverified_users": total_users - verified_users,
-            "admin_users": admin_users,
-            "regular_users": total_users - admin_users
-        }
-        
-    except Exception as e:
-        logger.error(f"获取用户统计失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="获取用户统计时发生错误"
-        )
+# 注意：用户管理功能已迁移到Supabase Dashboard和数据库层面
+# 管理员可以通过Supabase Dashboard直接管理用户，或使用Supabase SQL Editor

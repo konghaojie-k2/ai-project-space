@@ -339,3 +339,7 @@ config/local.py
 
 # AI 服务日志
 backend/logs/ai_service*.log 
+# txt文件
+*.txt
+# sql
+*.sql
