@@ -65,7 +65,6 @@ interface FileItem {
   url?: string
   thumbnail?: string
   source: 'user' | 'ai' | 'system' | 'api' // 文件来源：用户上传、AI生成、系统自动、API
-  isProcessed?: boolean // 是否已处理（索引到向量数据库）
   // 添加从API映射的字段
   originalName?: string
   fileSize?: number
@@ -334,7 +333,6 @@ const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
                 file.uploaded_by?.includes('AI') ||
                 // 新格式：模型名 (用户名)
                 file.uploaded_by?.match(/^(GPT|Claude|Gemini|LLaMA|ChatGPT|Anthropic|OpenAI|AI)\S*\s*\(/)) ? 'ai' as const : 'user' as const,
-        isProcessed: file.is_processed, // 从API获取索引状态
         originalName: file.original_name,
         fileSize: file.file_size,
         createdAt: file.created_at,
@@ -421,12 +419,9 @@ export default function ProjectDetailPage() {
   const params = useParams()
   const projectId = params.id as string
 
-  // 初始化项目数据
-  const [storedProjects, setStoredProjects] = useState<Record<string, Project>>(getStoredProjects())
-  const currentProject = storedProjects[projectId] || null
-  
-  // 初始时使用空数组，避免使用可能包含已删除文件的localStorage数据
-  const [project, setProject] = useState<Project | null>(currentProject)
+  // 初始化项目数据（服务器端使用空对象，避免hydration错误）
+  const [storedProjects, setStoredProjects] = useState<Record<string, Project>>({})
+  const [project, setProject] = useState<Project | null>(null)
   const [files, setFiles] = useState<FileItem[]>([])
   const [filteredFiles, setFilteredFiles] = useState<FileItem[]>([])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
@@ -438,7 +433,7 @@ export default function ProjectDetailPage() {
   const [showTagManager, setShowTagManager] = useState(false)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [fileToTag, setFileToTag] = useState<FileItem | null>(null)
-  const [isHydrated, setIsHydrated] = useState(false)
+  const [isHydrated, setIsHydrated] = useState(false) // 服务器端为false，客户端水合后设为true
   
   // 编辑文件状态
   const [showEditModal, setShowEditModal] = useState(false)
@@ -454,15 +449,22 @@ export default function ProjectDetailPage() {
   const [isIndexing, setIsIndexing] = useState(false)
   const [indexStats, setIndexStats] = useState({ indexed: 0, total: 0 })
 
-  // 设置客户端水合状态
+  // 设置客户端水合状态（只在客户端执行）
   useEffect(() => {
-    setIsHydrated(true);
-  }, []);
+    // 客户端水合后，从localStorage加载项目数据
+    const storedProjectsData = getStoredProjects()
+    setStoredProjects(storedProjectsData)
+    const currentProject = storedProjectsData[projectId] || null
+    setProject(currentProject)
+    
+    // 标记为已水合
+    setIsHydrated(true)
+  }, [projectId])
 
   // 客户端水合完成后再加载数据
   useEffect(() => {
+    // 如果还未水合，等待下一个渲染周期
     if (!isHydrated) {
-      console.log('⏳ 等待客户端水合完成...');
       return;
     }
 
@@ -476,12 +478,16 @@ export default function ProjectDetailPage() {
         setProject(projectInfo)
       }
       
-      // 加载文件数据和统计信息
+      // 加载文件数据（只调用一次API）
       try {
-        const [apiFiles, stats] = await Promise.all([
-          fetchProjectFiles(projectId),
-          fetchProjectStats(projectId)
-        ])
+        // 只调用一次API获取文件列表
+        const apiFiles = await fetchProjectFiles(projectId)
+        
+        // 前端计算统计信息，不需要再次调用API
+        const stats = {
+          fileCount: apiFiles.length,
+          totalSize: apiFiles.reduce((sum: number, file: FileItem) => sum + (file.size || 0), 0)
+        }
         
         console.log('✅ 项目数据加载成功:', { 
           fileCount: apiFiles.length, 
@@ -492,11 +498,18 @@ export default function ProjectDetailPage() {
         setFilteredFiles(apiFiles)
         setProjectStats(stats)
         
-        // 同步最新数据到localStorage
-        saveFilesToStorage(projectId, apiFiles)
+        // 同步最新数据到localStorage（异步执行，不阻塞渲染）
+        if (typeof window !== 'undefined') {
+          setTimeout(() => {
+            saveFilesToStorage(projectId, apiFiles)
+          }, 0)
+        }
         
-        // 同步更新项目统计到同步服务
-        await projectSync.updateProjectFileStats(projectId)
+        // 更新项目统计到同步服务（使用已有数据，不调用API）
+        projectSync.updateProject(projectId, {
+          fileCount: stats.fileCount,
+          totalSize: stats.totalSize
+        })
         
       } catch (error) {
         console.error('❌ 加载项目数据失败:', error)
@@ -693,22 +706,30 @@ export default function ProjectDetailPage() {
 
   // 封装文件操作后的数据同步
   const syncAfterFileOperation = async () => {
-    try {
-      const [apiFiles, stats] = await Promise.all([
-        fetchProjectFiles(projectId),
-        fetchProjectStats(projectId)
-      ])
-      setFiles(apiFiles)
-      setFilteredFiles(apiFiles)
-      setProjectStats(stats)
-      
-      // 同步最新数据到localStorage
-      saveFilesToStorage(projectId, apiFiles)
-      
-      // 同步更新到项目服务
-      await projectSync.updateProjectFileStats(projectId)
-    } catch (error) {
-      console.error('同步数据失败:', error)
+    // 触发项目同步服务的更新，这将通过subscribe触发loadData
+    // 避免直接调用loadData或fetchProjectFiles，防止竞态条件
+    const projectInfo = projectSync.getProjectById(projectId)
+    if (projectInfo) {
+      projectSync.updateProject(projectId, { 
+        ...projectInfo,
+        updatedAt: new Date().toISOString() 
+      })
+    } else {
+      // 如果没有项目信息，只能强制重新加载
+      const { apiGet } = await import('@/lib/api');
+      try {
+        const apiFiles = await fetchProjectFiles(projectId)
+        const stats = {
+          fileCount: apiFiles.length,
+          totalSize: apiFiles.reduce((sum: number, file: FileItem) => sum + (file.size || 0), 0)
+        }
+        setFiles(apiFiles)
+        setFilteredFiles(apiFiles)
+        setProjectStats(stats)
+        saveFilesToStorage(projectId, apiFiles)
+      } catch (e) {
+        console.error('同步失败:', e)
+      }
     }
   }
 
@@ -815,10 +836,15 @@ export default function ProjectDetailPage() {
           // 延迟重新获取数据，避免立即请求可能导致的竞态条件
           setTimeout(async () => {
             try {
-              const [apiFiles, stats] = await Promise.all([
-                fetchProjectFiles(projectId),
-                fetchProjectStats(projectId)
-              ])
+              // 只调用一次API获取文件列表
+              const apiFiles = await fetchProjectFiles(projectId)
+              
+              // 前端计算统计信息，不需要再次调用API
+              const stats = {
+                fileCount: apiFiles.length,
+                totalSize: apiFiles.reduce((sum: number, file: FileItem) => sum + (file.size || 0), 0)
+              }
+              
               setFiles(apiFiles)
               setFilteredFiles(apiFiles)
               setProjectStats(stats)
@@ -826,10 +852,15 @@ export default function ProjectDetailPage() {
               // 同步最新数据到localStorage
               saveFilesToStorage(projectId, apiFiles)
               
-              // 更新项目统计，但不等待完成，避免阻塞
-              projectSync.updateProjectFileStats(projectId).catch(error => {
+              // 更新项目统计到同步服务（使用已有数据，不调用API）
+              try {
+                projectSync.updateProject(projectId, {
+                  fileCount: stats.fileCount,
+                  totalSize: stats.totalSize
+                })
+              } catch (error) {
                 console.warn('更新项目统计失败，但不影响删除操作:', error)
-              })
+              }
             } catch (error) {
               console.error('重新获取文件列表失败:', error)
               // 即使重新获取失败，删除操作已经成功，不弹出错误
@@ -941,20 +972,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* 面包屑导航 */}
-      <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
-        <Link href="/dashboard" className="hover:text-gray-700 dark:hover:text-gray-300 flex items-center">
-          <HomeIcon className="h-4 w-4 mr-1" />
-          Dashboard
-        </Link>
-        <span>/</span>
-        <Link href="/dashboard/projects" className="hover:text-gray-700 dark:hover:text-gray-300">
-          项目管理
-        </Link>
-        <span>/</span>
-        <span className="text-gray-900 dark:text-white">{project?.name}</span>
-      </div>
-
+  
       {/* 项目信息头部 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
         <div className="flex items-start justify-between">
@@ -1223,19 +1241,6 @@ export default function ProjectDetailPage() {
                   )}
 
                   {/* 嵌入状态指示器 */}
-                  <div className="flex items-center space-x-1 mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    {file.isProcessed ? (
-                      <div className="flex items-center space-x-1">
-                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                        <span>已索引</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center space-x-1">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                        <span>未索引</span>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
             ))}

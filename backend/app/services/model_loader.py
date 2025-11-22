@@ -14,12 +14,14 @@ from ..core.model_config import model_manager, EmbeddingModelConfig, LLMModelCon
 
 class ModelLoader:
     """云端AI模型加载器"""
-    
+
     def __init__(self):
         self.models = {}
-        self.model_cache_dir = Path("../models")  # 使用项目根目录
-        self.model_cache_dir.mkdir(exist_ok=True)
-        
+
+        # 注释：云端API模式不需要本地模型缓存目录
+        # self.model_cache_dir = Path("../models")  # 已废弃，使用云端API
+        # self.model_cache_dir.mkdir(exist_ok=True)  # 已废弃
+
         # 初始化云端API配置
         self._setup_cloud_apis()
     
@@ -182,7 +184,8 @@ class ModelLoader:
             "mode": "cloud_api",
             "loaded_models": len(self.models),
             "model_list": self.list_loaded_models(),
-            "cache_dir": str(self.model_cache_dir)
+            # 注释：云端API模式没有本地缓存目录
+            # "cache_dir": str(self.model_cache_dir)
         }
 
 # 全局模型加载器实例

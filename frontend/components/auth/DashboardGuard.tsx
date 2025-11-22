@@ -19,6 +19,11 @@ export default function DashboardGuard({ children }: DashboardGuardProps) {
   const [initialCheckDone, setInitialCheckDone] = useState(false)
 
   useEffect(() => {
+    // 只在客户端执行
+    if (typeof window === 'undefined') {
+      return;
+    }
+
     console.log('🛡️ DashboardGuard 权限检查:', {
       hasHydrated,
       isLoading,
@@ -47,23 +52,40 @@ export default function DashboardGuard({ children }: DashboardGuardProps) {
     });
 
     // 如果有 token 但没有用户信息，可能是状态恢复问题
+    // 只在第一次检查时尝试恢复，避免重复调用
+    // 注意：如果用户刚刚登录，userStore可能还在更新中，给一个短暂的延迟
     if (authToken && !user && !initialCheckDone) {
-      console.log('🔄 DashboardGuard: 有token但无用户信息，尝试恢复状态...');
+      console.log('🔄 DashboardGuard: 有token但无用户信息，等待用户状态更新...');
       setInitialCheckDone(true);
       
-      // 尝试恢复认证状态
-      import('@/lib/utils/auth-recovery').then(({ authRecovery }) => {
-        authRecovery.attemptRecovery().then((recovered) => {
-          if (!recovered) {
-            console.log('❌ DashboardGuard: 状态恢复失败，将跳转到登录页');
+      // 先等待一小段时间，让userStore完成状态更新（登录后立即跳转时）
+      setTimeout(() => {
+        const currentUser = useUserStore.getState().user;
+        if (currentUser) {
+          console.log('✅ DashboardGuard: 用户状态已更新，无需恢复');
+          return;
+        }
+        
+        // 如果仍然没有用户信息，才尝试恢复
+        console.log('🔄 DashboardGuard: 用户状态未更新，尝试恢复状态...');
+        import('@/lib/utils/auth-recovery').then(({ authRecovery }) => {
+          authRecovery.attemptRecovery().then((recovered) => {
+            if (!recovered) {
+              console.log('❌ DashboardGuard: 状态恢复失败，将跳转到登录页');
+              setTimeout(() => {
+                router.replace('/login');
+              }, 1000);
+            } else {
+              console.log('✅ DashboardGuard: 状态恢复成功');
+            }
+          }).catch((error) => {
+            console.error('❌ DashboardGuard: 状态恢复出错:', error);
             setTimeout(() => {
               router.replace('/login');
             }, 1000);
-          } else {
-            console.log('✅ DashboardGuard: 状态恢复成功');
-          }
+          });
         });
-      });
+      }, 300); // 等待300ms，给userStore时间更新
       
       return;
     }
@@ -71,7 +93,7 @@ export default function DashboardGuard({ children }: DashboardGuardProps) {
     // 未登录，跳转到登录页
     if (!user) {
       console.warn('🚪 DashboardGuard: 用户未登录，准备跳转到登录页:', {
-        currentPath: window.location.pathname,
+        currentPath: typeof window !== 'undefined' ? window.location.pathname : 'unknown',
         hasAuthToken: !!authToken,
         timestamp: new Date().toISOString()
       });
@@ -80,19 +102,14 @@ export default function DashboardGuard({ children }: DashboardGuardProps) {
       return
     }
 
-    // 非管理员用户，跳转到无权限页面
-    if (!user.is_superuser) {
-      console.warn('🚫 DashboardGuard: 用户无管理员权限，跳转到未授权页面:', {
-        userEmail: user.email,
-        isSuperuser: user.is_superuser,
-        currentPath: window.location.pathname,
-        timestamp: new Date().toISOString()
-      });
-      router.replace('/unauthorized')
-      return
-    }
-
-    console.log('✅ DashboardGuard: 权限验证通过，允许访问');
+    // 移除管理员权限限制，允许所有用户访问dashboard
+    // 权限控制在各个组件内部处理
+    console.log('✅ DashboardGuard: 用户权限验证通过，允许访问:', {
+      userEmail: user.email,
+      isSuperuser: user.is_superuser,
+      currentPath: typeof window !== 'undefined' ? window.location.pathname : 'unknown',
+      timestamp: new Date().toISOString()
+    });
   }, [user, isLoading, hasHydrated, router, initialCheckDone])
 
   // 加载中显示
@@ -107,8 +124,8 @@ export default function DashboardGuard({ children }: DashboardGuardProps) {
     )
   }
 
-  // 未登录或无权限
-  if (!user || !user.is_superuser) {
+  // 只有未登录才返回null，所有登录用户都可以访问
+  if (!user) {
     return null
   }
 

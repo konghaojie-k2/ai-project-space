@@ -30,6 +30,10 @@ class SupabaseAuthService:
         """检查认证服务是否可用"""
         return self.supabase.is_available() and settings.use_supabase
 
+    def is_admin_available(self) -> bool:
+        """检查管理员认证服务是否可用"""
+        return self.supabase.is_admin_available() and settings.use_supabase
+
     async def authenticate_user(self, email: str, password: str) -> Optional[Dict]:
         """
         用户认证
@@ -78,23 +82,87 @@ class SupabaseAuthService:
             注册结果字典，失败返回None
         """
         if not self.is_available():
-            logger.error("认证服务不可用")
-            return None
+            logger.error("认证服务不可用，无法注册用户")
+            raise ValueError("认证服务不可用，请检查Supabase配置")
 
         try:
+            # 统一使用Anon Key进行用户注册（与登录保持一致）
+            logger.info(f"使用标准注册流程注册用户: {email}")
+
+            if settings.DISABLE_EMAIL_VERIFICATION:
+                # 开发环境：可以尝试使用Admin API自动确认邮箱，但只作为可选增强
+                if self.is_admin_available():
+                    logger.info(f"开发环境，尝试使用Admin API自动确认邮箱: {email}")
+                    user_data = await self.supabase.admin_create_user(
+                        email, password, user_metadata, email_confirm=True
+                    )
+
+                    if user_data:
+                        logger.info(f"用户注册成功（已自动确认邮箱）: {email}")
+                        return {
+                            'user': user_data,
+                            'message': '注册成功！邮箱已自动验证，可以直接登录'
+                        }
+                    else:
+                        logger.warning(f"Admin API创建用户失败，回退到标准注册流程: {email}")
+                else:
+                    logger.info(f"Admin API不可用，直接使用标准注册流程: {email}")
+
+            # 检查是否使用Demo Key，如果是则拒绝注册
+            try:
+                import base64
+                import json
+                anon_key = settings.SUPABASE_ANON_KEY or ""
+                if anon_key:
+                    # 解码JWT payload检查iss字段
+                    payload = anon_key.split('.')[1]
+                    payload += '=' * (-len(payload) % 4)
+                    decoded = base64.b64decode(payload).decode()
+                    jwt_data = json.loads(decoded)
+                    if jwt_data.get('iss') == 'supabase-demo':
+                        logger.error(f"检测到Demo Key，无法创建真实用户: {email}")
+                        logger.error("请配置真实的Supabase项目密钥到.env文件中的SUPABASE_ANON_KEY")
+                        raise ValueError("无法使用Demo Key创建用户账户，请配置真实的Supabase项目")
+            except Exception as decode_error:
+                logger.warning(f"JWT解码失败: {decode_error}")
+
+            # 使用标准注册流程（Anon Key，与登录保持一致）
             user_data = await self.supabase.sign_up(email, password, user_metadata)
 
             if user_data:
-                logger.info(f"用户注册成功: {email}")
-                return {
-                    'user': user_data,
-                    'message': '用户注册成功，请检查邮箱进行验证'
-                }
-            return None
+                if settings.DISABLE_EMAIL_VERIFICATION:
+                    logger.info(f"用户注册成功（开发环境，可能需要手动确认邮箱）: {email}")
+                    return {
+                        'user': user_data,
+                        'message': '注册成功！如果需要邮箱验证，请检查邮箱后登录'
+                    }
+                else:
+                    logger.info(f"用户注册成功，等待邮件验证: {email}")
+                    return {
+                        'user': user_data,
+                        'message': '注册成功！请检查邮箱进行验证后登录'
+                    }
 
+            # 如果注册失败，记录详细错误
+            logger.error(f"用户注册失败: {email}")
+            raise ValueError("用户注册失败，邮箱可能已存在或密码不符合要求")
+
+        except ValueError as e:
+            # 重新抛出ValueError，让调用者处理
+            raise
         except Exception as e:
-            logger.error(f"用户注册失败 {email}: {e}")
-            return None
+            error_msg = str(e)
+            logger.error(f"用户注册失败 {email}: {error_msg}", exc_info=True)
+            
+            # 根据错误类型抛出更具体的异常
+            if "email" in error_msg.lower() or "already exists" in error_msg.lower() or "duplicate" in error_msg.lower():
+                raise ValueError("该邮箱已被注册，请使用其他邮箱或直接登录")
+            elif "password" in error_msg.lower() or "weak" in error_msg.lower():
+                raise ValueError("密码不符合要求，请确保密码至少6个字符且足够安全")
+            elif "supabase" in error_msg.lower() or "service" in error_msg.lower() or "client" in error_msg.lower():
+                raise ValueError("认证服务配置错误，请联系管理员")
+            else:
+                raise ValueError(f"注册失败: {error_msg}")
 
     async def refresh_token(self, refresh_token: str) -> Optional[Dict]:
         """

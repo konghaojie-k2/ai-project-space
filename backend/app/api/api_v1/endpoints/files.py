@@ -2,6 +2,7 @@ from typing import List, Optional
 from pathlib import Path
 import uuid
 from datetime import datetime
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,13 @@ from app.services.rag_client import rag_client
 from app.utils.file_utils import validate_file_size, validate_file_type
 
 router = APIRouter()
+
+# 简单的内存缓存，用于统计API（5秒缓存）
+_stats_cache = {
+    "data": None,
+    "timestamp": 0,
+    "user_id": None
+}
 
 # 导入认证依赖
 from app.dependencies.auth import get_current_user, get_current_active_user, get_current_user_token, get_current_user_tokens
@@ -140,6 +148,26 @@ async def upload_files(
                     try:
                         app_logger.info(f"🤖 开始上传文件到外部RAG知识库: {file.filename}")
                         
+                        # 确保项目知识库存在（如果不存在则创建）
+                        kb_name = f"project_{project_id}"
+                        app_logger.info(f"🔍 检查/创建项目知识库: {kb_name}")
+                        try:
+                            # 尝试创建知识库（如果已存在会返回相应消息）
+                            kb_result = await rag_client.create_knowledge_base(
+                                name=kb_name,
+                                description=f"项目 {project_id} 的知识库"
+                            )
+                            app_logger.info(f"📋 知识库创建结果: {kb_result}")
+                            if kb_result.get('success') or "已存在" in kb_result.get('message', ''):
+                                app_logger.info(f"✅ 项目知识库已就绪: {kb_name}")
+                            else:
+                                app_logger.warning(f"⚠️ 项目知识库创建可能失败: {kb_result.get('message', '未知错误')}")
+                        except Exception as kb_error:
+                            # 知识库创建失败不影响文件上传
+                            app_logger.error(f"❌ 检查/创建项目知识库时出错: {kb_error}，继续上传文件")
+                            import traceback
+                            app_logger.error(f"❌ 错误堆栈: {traceback.format_exc()}")
+                        
                         # 重新读取文件数据用于RAG上传
                         await file.seek(0)
                         file_data = await file.read()
@@ -157,11 +185,12 @@ async def upload_files(
                             "stage": stage
                         }
                         
-                        # 上传到外部RAG
+                        # 上传到外部RAG（使用项目知识库）
+                        app_logger.info(f"🤖 准备上传到RAG知识库: {kb_name}, 文件: {file.filename}")
                         rag_result = await rag_client.upload_file(
                             file_content=file_data,
                             filename=file.filename,
-                            collection_name=f"project_{project_id}",
+                            collection_name=kb_name,  # 使用项目知识库
                             metadata=metadata
                         )
                         
@@ -173,16 +202,13 @@ async def upload_files(
                                 await rag_mapping_service.create_mapping(
                                     local_file_id=file_record.id,
                                     external_document_id=rag_result.document_id,
-                                    external_collection_name=f"project_{project_id}",
+                                    external_collection_name=kb_name,  # 使用项目知识库名称
                                     project_id=project_id,
                                     chunk_count=rag_result.chunk_count
                                 )
                                 app_logger.info(f"✅ RAG映射记录创建成功")
                             except Exception as mapping_error:
                                 app_logger.warning(f"⚠️ RAG映射记录创建失败: {mapping_error}")
-                            
-                            # 标记文件已处理
-                            await supabase_file_service.mark_file_processed(file_record.id)
                         else:
                             app_logger.warning(f"🤖 文件上传到RAG知识库失败: {file.filename}, 原因: {rag_result.message}")
                     except Exception as rag_error:
@@ -212,7 +238,7 @@ async def list_files(
     tags: Optional[str] = Query(None, description="标签筛选，逗号分隔"),
     search: Optional[str] = Query(None, description="搜索关键词"),
     page: int = Query(1, ge=1, description="页码"),
-    size: int = Query(20, ge=1, le=100, description="每页数量"),
+    size: int = Query(50, ge=1, le=100, description="每页数量"),  # 默认50，最大100
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
@@ -247,8 +273,36 @@ async def list_files(
                 size=size
             )
         
-        # 转换为FileResponse格式
-        files = [FileResponse(**file_data) for file_data in files_data]
+        # 转换为FileResponse格式，确保所有必需字段都有值
+        files = []
+        for file_data in files_data:
+            # 确保必需字段有默认值
+            if 'stage' not in file_data or file_data.get('stage') is None:
+                file_data['stage'] = None  # 允许为None
+            # 确保其他字段有默认值
+            if 'tags' not in file_data or file_data.get('tags') is None:
+                file_data['tags'] = []
+            if 'is_public' not in file_data:
+                file_data['is_public'] = False
+            if 'access_level' not in file_data:
+                file_data['access_level'] = 'all_users'
+            if 'view_count' not in file_data:
+                file_data['view_count'] = 0
+            if 'download_count' not in file_data:
+                file_data['download_count'] = 0
+            if 'like_count' not in file_data:
+                file_data['like_count'] = 0
+            if 'version' not in file_data:
+                file_data['version'] = 1
+            if 'file_metadata' not in file_data:
+                file_data['file_metadata'] = {}
+            
+            try:
+                files.append(FileResponse(**file_data))
+            except Exception as e:
+                app_logger.warning(f"文件数据转换失败，跳过该文件: {file_data.get('id', 'unknown')}, 错误: {str(e)}")
+                continue
+        
         return files
         
     except Exception as e:
@@ -273,6 +327,26 @@ async def get_file(
         is_superuser = current_user.get('is_superuser', False)
         if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
             raise HTTPException(status_code=403, detail="无权限访问此文件")
+        
+        # 确保所有必需字段都有默认值
+        if 'stage' not in file_data or file_data.get('stage') is None:
+            file_data['stage'] = None
+        if 'tags' not in file_data or file_data.get('tags') is None:
+            file_data['tags'] = []
+        if 'is_public' not in file_data:
+            file_data['is_public'] = False
+        if 'access_level' not in file_data:
+            file_data['access_level'] = 'all_users'
+        if 'view_count' not in file_data:
+            file_data['view_count'] = 0
+        if 'download_count' not in file_data:
+            file_data['download_count'] = 0
+        if 'like_count' not in file_data:
+            file_data['like_count'] = 0
+        if 'version' not in file_data:
+            file_data['version'] = 1
+        if 'file_metadata' not in file_data:
+            file_data['file_metadata'] = {}
         
         return FileResponse(**file_data)
         
@@ -409,6 +483,26 @@ async def update_file(
         if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在或无权限")
         
+        # 确保所有必需字段都有默认值
+        if 'stage' not in file_data or file_data.get('stage') is None:
+            file_data['stage'] = None
+        if 'tags' not in file_data or file_data.get('tags') is None:
+            file_data['tags'] = []
+        if 'is_public' not in file_data:
+            file_data['is_public'] = False
+        if 'access_level' not in file_data:
+            file_data['access_level'] = 'all_users'
+        if 'view_count' not in file_data:
+            file_data['view_count'] = 0
+        if 'download_count' not in file_data:
+            file_data['download_count'] = 0
+        if 'like_count' not in file_data:
+            file_data['like_count'] = 0
+        if 'version' not in file_data:
+            file_data['version'] = 1
+        if 'file_metadata' not in file_data:
+            file_data['file_metadata'] = {}
+        
         return FileResponse(**file_data)
         
     except HTTPException:
@@ -495,18 +589,37 @@ async def get_file_stats(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    获取文件统计信息
+    获取文件统计信息（性能优化：添加5秒缓存）
     """
     try:
         is_superuser = current_user.get('is_superuser', False)
-        user_id = current_user.get('id')
+        user_id = str(current_user.get('id'))
+        current_time = asyncio.get_event_loop().time()
+
+        # 检查缓存（5秒有效期）
+        cache_key = f"admin_{user_id}" if is_superuser else f"user_{user_id}"
+        if (_stats_cache["data"] and
+            _stats_cache["user_id"] == cache_key and
+            current_time - _stats_cache["timestamp"] < 5.0):
+            app_logger.info(f"🚀 使用缓存文件统计 (用户: {cache_key})")
+            return {"message": "获取统计信息成功", "data": _stats_cache["data"]}
+
+        # 缓存未命中，重新查询
         if is_superuser:
             stats = await supabase_file_service.get_file_stats_all()
         else:
-            stats = await supabase_file_service.get_file_stats(str(user_id))
-        
+            stats = await supabase_file_service.get_file_stats(user_id)
+
+        # 更新缓存
+        _stats_cache.update({
+            "data": stats,
+            "timestamp": current_time,
+            "user_id": cache_key
+        })
+
+        app_logger.info(f"🔄 更新文件统计缓存 (用户: {cache_key})")
         return {"message": "获取统计信息成功", "data": stats}
-        
+
     except Exception as e:
         app_logger.error(f"获取文件统计失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取文件统计失败: {str(e)}")
@@ -532,7 +645,7 @@ async def batch_index_files(
         if project_id:
             files_data = await supabase_file_service.get_files_by_project(project_id)
         else:
-            files_data = await supabase_file_service.get_all_unprocessed_files() if not force_reindex else await supabase_file_service.get_all_files()
+            files_data = await supabase_file_service.get_all_files()
         
         app_logger.info(f"🤖 开始批量上传到RAG，共 {len(files_data)} 个文件")
         
@@ -541,9 +654,6 @@ async def batch_index_files(
         
         for file_data in files_data:
             try:
-                # 跳过已处理的文件（除非强制重新上传）
-                if file_data.get('is_processed') and not force_reindex:
-                    continue
                 
                 file_id = file_data.get('id')
                 file_name = file_data.get('original_name', 'unknown')
@@ -600,8 +710,6 @@ async def batch_index_files(
                     except Exception as mapping_error:
                         app_logger.warning(f"⚠️ 映射记录创建失败: {mapping_error}")
                     
-                    # 标记文件已处理
-                    await supabase_file_service.mark_file_processed(file_id)
                     uploaded_count += 1
                     app_logger.info(f"🤖 文件上传到RAG成功: {file_name}")
                 else:

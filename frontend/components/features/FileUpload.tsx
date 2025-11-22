@@ -183,18 +183,16 @@ export function FileUpload({
           const uploadedFile = result[0]
           setEmbeddingStatus(prev => ({
             ...prev,
-            [file.id]: uploadedFile.is_processed ? 'success' : 'processing'
+            [file.id]: 'success'
           }))
           
-          // 如果未处理，显示处理中状态
-          if (!uploadedFile.is_processed) {
-            setTimeout(() => {
-              setEmbeddingStatus(prev => ({
-                ...prev,
-                [file.id]: 'success'
-              }))
-            }, 3000) // 3秒后假设处理完成
-          }
+          // 上传完成，设置成功状态
+          setTimeout(() => {
+            setEmbeddingStatus(prev => ({
+              ...prev,
+              [file.id]: 'success'
+            }))
+          }, 2000)
         }
       } else {
         const error = await response.text()

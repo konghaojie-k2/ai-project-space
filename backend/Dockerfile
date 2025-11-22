@@ -24,8 +24,8 @@ RUN uv pip install -e .
 # 复制应用代码
 COPY backend/ ./
 
-# 创建必要的目录
-RUN mkdir -p uploads logs
+# 创建必要的目录 (只创建logs目录，uploads已使用Supabase Storage)
+RUN mkdir -p logs
 
 # 设置权限
 RUN chmod +x /app

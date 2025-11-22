@@ -181,11 +181,11 @@ export default function RegisterPage() {
         email: formData.email,
         password: formData.password
       })
-      
-      // 注册成功，显示通知并跳转到dashboard
-      notify.success('注册成功', '欢迎加入AI项目管理系统')
-      router.push('/dashboard')
-      
+
+      // 注册成功，显示通知并跳转到登录页面
+      notify.success('注册成功', '请检查邮箱进行验证后登录')
+      router.push('/login')
+
     } catch (error) {
       // 错误已经在store中处理，这里可以添加额外的错误处理
       console.error('注册失败:', error)
@@ -344,13 +344,13 @@ export default function RegisterPage() {
               />
               <label htmlFor="agree-terms" className="ml-2 block text-sm text-secondary-700">
                 我已阅读并同意{' '}
-                <Link href="/terms" className="text-primary-600 hover:text-primary-500 underline">
+                <span className="text-secondary-500 cursor-not-allowed opacity-50" title="功能暂未开放">
                   用户协议
-                </Link>
+                </span>
                 {' '}和{' '}
-                <Link href="/privacy" className="text-primary-600 hover:text-primary-500 underline">
+                <span className="text-secondary-500 cursor-not-allowed opacity-50" title="功能暂未开放">
                   隐私政策
-                </Link>
+                </span>
               </label>
             </div>
             {formErrors.agreeToTerms && (

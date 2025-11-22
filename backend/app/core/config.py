@@ -114,10 +114,12 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://:redis123@localhost:6379/0"
     
     # ========================================
-    # 本地文件存储配置
+    # 本地文件存储配置 (已废弃，使用Supabase Storage)
     # ========================================
-    UPLOAD_DIR: Path = Path("../uploads")  # 使用项目根目录
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    # 注意：项目已完全迁移到 Supabase Storage，不再使用本地存储
+    # UPLOAD_DIR 保留仅为兼容性，实际不会被使用
+    UPLOAD_DIR: Path = Path("../uploads")  # 已废弃，使用Supabase Storage
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB (Supabase Storage限制)
     ALLOWED_FILE_TYPES: Union[str, List[str]] = Field(
         default=[
             "pdf", "docx", "xlsx", "pptx", "txt", "md",
@@ -198,6 +200,9 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None
     EMAILS_FROM_EMAIL: Optional[str] = None
     EMAILS_FROM_NAME: Optional[str] = None
+
+    # 开发环境邮件验证设置
+    DISABLE_EMAIL_VERIFICATION: bool = True  # 开发环境禁用邮件验证
     
     # ========================================
     # 日志配置
@@ -236,16 +241,22 @@ class Settings(BaseSettings):
     ]
     
     # ========================================
-    # 文件存储路径
+    # 文件存储路径 (已废弃，使用Supabase Storage)
     # ========================================
-    TEMP_DIR: Path = Path("../temp")  # 使用项目根目录
-    
+    TEMP_DIR: Path = Path("../temp")  # 已废弃，使用Supabase Storage
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # 确保目录存在
-        self.UPLOAD_DIR.mkdir(exist_ok=True)
-        self.TEMP_DIR.mkdir(exist_ok=True)
+        # 强制设置API_V1_STR为正确的值（防止环境变量干扰）
+        if not hasattr(self, 'API_V1_STR') or not self.API_V1_STR.startswith("/"):
+            self.API_V1_STR = "/api/v1"
+
+        # 只确保日志目录存在，其他目录已废弃
         Path(self.LOG_FILE).parent.mkdir(exist_ok=True)
+
+        # 注释：不再创建本地存储目录，使用Supabase Storage
+        # self.UPLOAD_DIR.mkdir(exist_ok=True)  # 已废弃
+        # self.TEMP_DIR.mkdir(exist_ok=True)    # 已废弃
     
     @property
     def is_development(self) -> bool:

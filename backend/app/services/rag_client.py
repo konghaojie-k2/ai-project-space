@@ -182,37 +182,64 @@ class RAGServiceClient:
         try:
             # 提取知识库名称（kb_name）
             # collection_name格式可能是 "project_123" 或 "default"
-            kb_name = collection_name or self.config.collection_name
+            # 如果明确传递了collection_name（即使是空字符串），优先使用传递的值
+            # 只有在collection_name为None时才使用默认值
+            if collection_name is None:
+                kb_name = self.config.collection_name
+                logger.warning(f"⚠️ 未指定知识库名称，使用默认知识库: {kb_name}")
+            else:
+                kb_name = collection_name
+                logger.info(f"✅ 使用指定知识库: {kb_name}")
             
             # 使用multipart/form-data上传文件
+            # 注意：虽然URL路径中包含了知识库名称，但为了确保RAG服务端正确使用，
+            # 我们也在metadata中显式传递知识库名称
             files = {
                 'file': (filename, file_content)
             }
+            
+            # 在metadata中显式添加知识库名称，确保RAG服务端能正确识别
+            if metadata is None:
+                metadata = {}
+            metadata['collection_name'] = kb_name
+            metadata['knowledge_base'] = kb_name
 
             # 不设置Content-Type，让httpx自动设置multipart boundary
             headers = {k: v for k, v in self.headers.items() if k != 'Content-Type'}
 
             async with httpx.AsyncClient(timeout=self.config.timeout * 2) as client:
                 # 使用正确的端点：/api/v1/knowledge-bases/{kb_name}/chunks/upload
+                upload_url = f"{self.base_url}/api/v1/knowledge-bases/{kb_name}/chunks/upload"
+                logger.info(f"📤 RAG上传请求URL: {upload_url}")
+                logger.info(f"📤 知识库名称: {kb_name}, 文件名: {filename}")
+                logger.info(f"📤 元数据中包含知识库: {metadata.get('collection_name')}, {metadata.get('knowledge_base')}")
+                
+                # 注意：httpx的files参数会自动处理multipart/form-data
+                # 如果需要传递metadata，可能需要通过data参数传递，但RAG API可能不支持
+                # 目前先通过URL路径传递，如果RAG服务端有问题，需要修复服务端代码
                 response = await client.post(
-                    f"{self.base_url}/api/v1/knowledge-bases/{kb_name}/chunks/upload",
+                    upload_url,
                     files=files,
                     headers=headers
                 )
                 response.raise_for_status()
+                
+                logger.info(f"📥 RAG上传响应状态: {response.status_code}")
 
                 result = response.json()
+                logger.info(f"📥 RAG上传响应内容: {result}")
                 
                 # API返回DocumentUploadResponse格式：{task_id, message, filename}
                 # 需要轮询任务状态获取最终结果
                 task_id = result.get('task_id')
                 if not task_id:
+                    logger.error(f"❌ 未获取到任务ID，响应: {result}")
                     return RAGUploadResponse(
                         success=False,
                         message="未获取到任务ID"
                     )
                 
-                logger.info(f"RAG文件上传任务已创建: {filename}, task_id: {task_id}")
+                logger.info(f"✅ RAG文件上传任务已创建: {filename}, task_id: {task_id}, 知识库: {kb_name}")
                 
                 # 轮询任务状态直到完成
                 max_wait_time = self.config.timeout * 2  # 最大等待时间
@@ -312,23 +339,42 @@ class RAGServiceClient:
             查询响应结果
         """
         try:
+            kb_name = collection_name or self.config.collection_name
+            
+            # 根据RAG API的实际接口格式构建请求
+            # RAG API使用: question, knowledge_base, top_k, threshold
             payload = {
-                "query": query_text,
-                "collection_name": collection_name or self.config.collection_name,
+                "question": query_text,
+                "knowledge_base": kb_name,
                 "top_k": top_k,
-                "similarity_threshold": similarity_threshold
+                "threshold": similarity_threshold
             }
 
             async with httpx.AsyncClient(timeout=self.config.timeout) as client:
+                # 使用正确的RAG API端点：/api/v1/query
+                query_url = f"{self.base_url}/api/v1/query"
+                logger.info(f"🔍 RAG查询请求URL: {query_url}")
+                logger.info(f"🔍 查询文本: {query_text[:50]}..., 知识库: {kb_name}")
+                logger.info(f"🔍 请求参数: {payload}")
+                
                 response = await client.post(
-                    f"{self.base_url}/query",
+                    query_url,
                     json=payload,
                     headers=self.headers
                 )
                 response.raise_for_status()
 
                 result = response.json()
-                return RAGQueryResponse(**result)
+                logger.info(f"✅ RAG查询成功，答案长度: {len(result.get('answer', ''))}")
+                
+                # 转换响应格式以匹配RAGQueryResponse
+                return RAGQueryResponse(
+                    answer=result.get('answer', ''),
+                    sources=result.get('sources', []),
+                    query=query_text,
+                    processing_time=result.get('processing_time', 0.0),
+                    metadata=result.get('metadata', {})
+                )
 
         except httpx.HTTPStatusError as e:
             logger.error(f"RAG查询HTTP错误: {e.response.status_code} - {e.response.text}")
@@ -401,38 +447,66 @@ class RAGServiceClient:
         collection_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        删除文档
+        删除文档及其所有关联的chunks
 
         Args:
-            document_id: 文档ID
-            collection_name: 知识库名称
+            document_id: 文档ID（RAG服务中的file_id或document_id）
+            collection_name: 知识库名称（可选，用于指定知识库）
 
         Returns:
-            删除结果
+            删除结果，包含success和message字段
         """
         try:
-            params = {
-                "collection_name": collection_name or self.config.collection_name
-            }
-
+            kb_name = collection_name or self.config.collection_name
+            logger.info(f"🗑️ 准备删除RAG文档: {document_id}, 知识库: {kb_name}")
+            
             async with httpx.AsyncClient(timeout=self.config.timeout) as client:
+                # 根据RAG API文档，删除文件及其所有chunks的端点是：
+                # DELETE /api/v1/files/{file_id}
+                # 这个端点会删除原始文件及其关联的所有分块
+                delete_url = f"{self.base_url}/api/v1/files/{document_id}"
+                logger.info(f"🗑️ RAG删除请求URL: {delete_url}")
+                
                 response = await client.delete(
-                    f"{self.base_url}/documents/{document_id}",
-                    params=params,
+                    delete_url,
                     headers=self.headers
                 )
                 response.raise_for_status()
 
-                return response.json()
+                result = response.json()
+                logger.info(f"✅ RAG文档删除成功: {document_id}, 响应: {result}")
+                
+                # 确保返回格式统一
+                if isinstance(result, dict):
+                    if 'success' not in result:
+                        result['success'] = True
+                    return result
+                else:
+                    return {
+                        "success": True,
+                        "message": result if isinstance(result, str) else "文档删除成功"
+                    }
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"RAG文档删除HTTP错误: {e.response.status_code} - {e.response.text}")
+            error_text = e.response.text
+            logger.error(f"❌ RAG文档删除HTTP错误: {e.response.status_code} - {error_text}")
+            
+            # 如果是404，可能文档已经不存在，也算成功
+            if e.response.status_code == 404:
+                logger.warning(f"⚠️ RAG文档不存在（可能已删除）: {document_id}")
+                return {
+                    "success": True,
+                    "message": "文档不存在（可能已删除）"
+                }
+            
             return {
                 "success": False,
-                "message": f"HTTP错误: {e.response.status_code}"
+                "message": f"HTTP错误: {e.response.status_code} - {error_text}"
             }
         except Exception as e:
-            logger.error(f"RAG文档删除失败: {e}")
+            logger.error(f"❌ RAG文档删除失败: {e}")
+            import traceback
+            logger.error(f"❌ 错误堆栈: {traceback.format_exc()}")
             return {
                 "success": False,
                 "message": f"删除失败: {str(e)}"
@@ -607,16 +681,32 @@ class RAGServiceClient:
 
         except httpx.HTTPStatusError as e:
             error_text = e.response.text
-            logger.error(f"创建知识库HTTP错误: {e.response.status_code} - {error_text}")
+            logger.warning(f"创建知识库HTTP错误: {e.response.status_code} - {error_text}")
             
-            # 处理重复键错误
-            if e.response.status_code == 400 and "duplicate key value" in error_text.lower():
-                return {
-                    "success": False,
-                    "message": "知识库名称已存在",
-                    "error": "duplicate_name"
-                }
+            # 处理知识库已存在的情况（这是正常情况，不算错误）
+            if e.response.status_code == 400:
+                try:
+                    error_json = e.response.json()
+                    error_detail = error_json.get('detail', '')
+                    # 检查是否是"知识库名称已存在"的错误
+                    if "已存在" in error_detail or "duplicate" in error_detail.lower() or "已存在" in error_text:
+                        logger.info(f"知识库 '{name}' 已存在，这是正常情况")
+                        return {
+                            "success": True,  # 已存在也算成功
+                            "message": f"知识库 '{name}' 已存在",
+                            "data": {}
+                        }
+                except:
+                    # 如果无法解析JSON，检查文本内容
+                    if "已存在" in error_text or "duplicate" in error_text.lower():
+                        logger.info(f"知识库 '{name}' 已存在（从错误文本判断）")
+                        return {
+                            "success": True,  # 已存在也算成功
+                            "message": f"知识库 '{name}' 已存在",
+                            "data": {}
+                        }
             
+            # 其他400错误或其他错误
             return {
                 "success": False,
                 "message": f"HTTP错误: {e.response.status_code}",
@@ -641,21 +731,23 @@ class RAGServiceClient:
             删除结果
         """
         try:
-            params = {
-                "collection_name": collection_name or self.config.collection_name,
-                "confirm": True
-            }
+            kb_name = collection_name or self.config.collection_name
 
             async with httpx.AsyncClient(timeout=self.config.timeout * 3) as client:
+                # 使用正确的端点：/api/v1/knowledge-bases/{kb_name}
                 response = await client.delete(
-                    f"{self.base_url}/collections/delete",
-                    params=params,
+                    f"{self.base_url}/api/v1/knowledge-bases/{kb_name}",
                     headers=self.headers
                 )
                 response.raise_for_status()
 
                 result = response.json()
-                return result
+                logger.info(f"知识库删除成功: {kb_name}")
+                return {
+                    "success": True,
+                    "message": result.get("message", f"知识库 '{kb_name}' 已删除"),
+                    "data": result
+                }
 
         except httpx.HTTPStatusError as e:
             logger.error(f"删除知识库HTTP错误: {e.response.status_code} - {e.response.text}")

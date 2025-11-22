@@ -21,7 +21,7 @@ import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { formatFileSize, cn } from '@/lib/utils'
 import { projectSync } from '@/lib/services/project-sync'
-import DashboardPageHeader from '@/components/layout/DashboardPageHeader'
+// import DashboardPageHeader from '@/components/layout/DashboardPageHeader' // 已移除，使用dashboard layout中的header
 
 interface Project {
   id: string
@@ -212,18 +212,22 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 页面头部 */}
-      <DashboardPageHeader
-        title="项目管理"
-        description="管理您的AI项目，按项目组织文件和资源"
-        actions={
+    <div className="bg-gray-50 min-h-full">
+      {/* 页面标题区域 */}
+      <div className="px-6 py-6 border-b border-gray-200 bg-white">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">项目管理</h1>
+            <p className="text-sm text-gray-600 mt-1">管理您的AI项目，按项目组织文件和资源</p>
+          </div>
+
+          {/* 新建项目按钮 */}
           <Button onClick={() => setShowCreateModal(true)}>
             <PlusIcon className="h-5 w-5 mr-2" />
             新建项目
           </Button>
-        }
-      />
+        </div>
+      </div>
 
       <div className="space-y-6 p-6">
 

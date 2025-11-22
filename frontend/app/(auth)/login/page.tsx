@@ -63,24 +63,22 @@ export default function LoginPage() {
       const userState = useUserStore.getState()
       const user = userState.user
       
-      // 根据用户类型决定重定向地址
-      let redirectPath = '/dashboard' // 默认跳转到dashboard
-      
+      // 所有用户都跳转到共享dashboard，权限在dashboard页面内控制
+      let redirectPath = '/dashboard'
+
       if (user) {
         if (user.is_superuser) {
-          // 管理员用户跳转到管理后台
-          redirectPath = '/dashboard'
+          // 管理员登录
           toast.success('管理员登录成功！欢迎回到管理后台')
         } else {
-          // 普通用户跳转到工作空间（如果存在的话，否则也跳转到dashboard）
-          redirectPath = '/dashboard' // 暂时都跳转到dashboard，后续可以创建专门的用户工作空间
+          // 普通用户登录
           toast.success('登录成功！欢迎回到AI项目管理系统')
         }
       } else {
         toast.success('登录成功！欢迎回到AI项目管理系统')
       }
       
-      console.log('🔄 登录成功，重定向到:', {
+      console.log('🔄 登录成功，重定向到共享dashboard:', {
         userType: user?.is_superuser ? '管理员' : '普通用户',
         redirectPath,
         userEmail: user?.email

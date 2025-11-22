@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import ToastProvider from '@/components/providers/ToastProvider'
 import { UserProvider } from '@/lib/contexts/UserContext'
-import UserStatusIndicator from '@/components/debug/UserStatusIndicator'
+// UserStatusIndicator功能已集成到Sidebar中
 import '@/lib/debug/auth-monitor' // 引入认证监控工具
 import '@/lib/debug/redirect-tracker' // 引入重定向追踪器
 import '@/lib/utils/auth-sync' // 引入认证状态同步工具
@@ -16,6 +16,14 @@ export const metadata: Metadata = {
   description: '基于AI的智能项目管理平台，支持多模态内容处理和智能问答',
   keywords: ['AI', '项目管理', '智能问答', '文件管理', '团队协作'],
   authors: [{ name: 'AI项目管理系统团队' }],
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.png', type: 'image/png', sizes: '32x32' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/favicon.png',
+  },
   openGraph: {
     title: 'AI项目管理系统',
     description: '基于AI的智能项目管理平台',
@@ -52,8 +60,7 @@ export default function RootLayout({
           {/* Toast通知提供者 */}
           <ToastProvider />
           
-          {/* 开发环境下显示用户状态指示器 */}
-          {process.env.NODE_ENV === 'development' && <UserStatusIndicator />}
+          {/* 用户状态指示器功能已集成到Sidebar中 */}
         </UserProvider>
       </body>
     </html>

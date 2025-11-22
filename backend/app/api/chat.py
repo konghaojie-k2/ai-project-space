@@ -16,6 +16,13 @@ from loguru import logger
 
 from ..services.ai_service import ai_service
 from ..services.supabase_client import supabase_service
+
+# 简单的内存缓存，用于聊天统计API（5秒缓存）
+_chat_stats_cache = {
+    "data": None,
+    "timestamp": 0,
+    "user_id": None
+}
 from typing import Dict, Any
 from ..models.chat import (
     ChatRequest, 
@@ -41,8 +48,8 @@ async def create_conversation(
 ):
     """创建新会话（已迁移到 Supabase）"""
     try:
-        # TODO: 使用 Supabase 创建会话
-        conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
+        # 生成标准UUID格式的会话ID（数据库要求UUID类型）
+        conversation_id = str(uuid.uuid4())
         
         # 使用 Supabase 创建会话
         session_data = {
@@ -230,10 +237,14 @@ async def send_message(
         }
         await supabase_service.create_chat_message(user_message_data)
         
+        # 确定项目ID：优先使用请求中的project_id，否则使用会话的project_id
+        project_id = request.project_id or conversation.get('project_id')
+        logger.info(f"💬 聊天项目ID: {project_id}, 会话项目ID: {conversation.get('project_id')}, 请求项目ID: {request.project_id}")
+        
         # 调用AI服务（带权限过滤）
         ai_response = await ai_service.chat_completion(
             messages=request.messages,
-            project_context=request.project_id,
+            project_context=project_id,  # 使用确定的project_id
             model_name=request.model or "gpt-3.5-turbo",
             user_id=str(current_user.get('id')),
             is_admin=current_user.get('is_superuser', False)
@@ -312,10 +323,14 @@ async def send_message_stream(
                 
                 buffer = ""  # 用于缓冲不完整的chunks
                 
+                # 确定项目ID：优先使用请求中的project_id，否则使用会话的project_id
+                project_id = request.project_id or conversation.get('project_id')
+                logger.info(f"💬 流式聊天项目ID: {project_id}")
+                
                 # 调用AI服务获取流式回复（带权限过滤）
                 async for chunk in ai_service.chat_completion_stream(
                     messages=request.messages,
-                    project_context=request.project_id,
+                    project_context=project_id,  # 使用确定的project_id
                     model_name=request.model or "gpt-3.5-turbo",
                     user_id=user_id,
                     is_admin=is_admin
@@ -503,17 +518,33 @@ async def get_chat_stats(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    获取聊天统计信息（使用Supabase）
+    获取聊天统计信息（性能优化：添加5秒缓存）
     """
     try:
-        # 使用Supabase获取统计信息
         user_id = str(current_user.get('id'))
+        current_time = asyncio.get_event_loop().time()
+
+        # 检查缓存（5秒有效期）
+        if (_chat_stats_cache["data"] and
+            _chat_stats_cache["user_id"] == user_id and
+            current_time - _chat_stats_cache["timestamp"] < 5.0):
+            logger.info(f"🚀 使用缓存聊天统计 (用户: {user_id})")
+            return _chat_stats_cache["data"]
+
+        # 缓存未命中，重新查询
         stats = await supabase_service.get_chat_stats(user_id=user_id)
-        
-        logger.info(f"聊天统计: 对话数={stats['total_conversations']}, 消息数={stats['total_messages']}, AI消息数={stats['ai_messages']}")
-        
+
+        # 更新缓存
+        _chat_stats_cache.update({
+            "data": stats,
+            "timestamp": current_time,
+            "user_id": user_id
+        })
+
+        logger.info(f"🔄 更新聊天统计缓存 (用户: {user_id}): 对话数={stats['total_conversations']}, 消息数={stats['total_messages']}, AI消息数={stats['ai_messages']}")
+
         return stats
-        
+
     except Exception as e:
         logger.error(f"获取聊天统计失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取聊天统计失败: {str(e)}")

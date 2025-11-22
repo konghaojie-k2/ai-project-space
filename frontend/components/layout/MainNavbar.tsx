@@ -62,30 +62,30 @@ export default function MainNavbar() {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-8">
-            <Link 
-              href="/features" 
-              className="text-gray-600 hover:text-primary-600 transition-colors"
+            <span 
+              className="text-gray-400 cursor-not-allowed opacity-50"
+              title="功能暂未开放"
             >
               功能特性
-            </Link>
-            <Link 
-              href="/pricing" 
-              className="text-gray-600 hover:text-primary-600 transition-colors"
+            </span>
+            <span 
+              className="text-gray-400 cursor-not-allowed opacity-50"
+              title="功能暂未开放"
             >
               价格方案
-            </Link>
-            <Link 
-              href="/demo" 
-              className="text-gray-600 hover:text-primary-600 transition-colors"
+            </span>
+            <span 
+              className="text-gray-400 cursor-not-allowed opacity-50"
+              title="功能暂未开放"
             >
               产品演示
-            </Link>
-            <Link 
-              href="/help" 
-              className="text-gray-600 hover:text-primary-600 transition-colors"
+            </span>
+            <span 
+              className="text-gray-400 cursor-not-allowed opacity-50"
+              title="功能暂未开放"
             >
               帮助中心
-            </Link>
+            </span>
 
             {/* 用户状态区域 */}
             {isAuthenticated ? (
@@ -167,34 +167,30 @@ export default function MainNavbar() {
         {isMenuOpen && (
           <div className="md:hidden border-t border-gray-200 py-4">
             <div className="space-y-4">
-              <Link 
-                href="/features" 
-                className="block text-gray-600 hover:text-primary-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+              <span 
+                className="block text-gray-400 cursor-not-allowed opacity-50"
+                title="功能暂未开放"
               >
                 功能特性
-              </Link>
-              <Link 
-                href="/pricing" 
-                className="block text-gray-600 hover:text-primary-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+              </span>
+              <span 
+                className="block text-gray-400 cursor-not-allowed opacity-50"
+                title="功能暂未开放"
               >
                 价格方案
-              </Link>
-              <Link 
-                href="/demo" 
-                className="block text-gray-600 hover:text-primary-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+              </span>
+              <span 
+                className="block text-gray-400 cursor-not-allowed opacity-50"
+                title="功能暂未开放"
               >
                 产品演示
-              </Link>
-              <Link 
-                href="/help" 
-                className="block text-gray-600 hover:text-primary-600 transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+              </span>
+              <span 
+                className="block text-gray-400 cursor-not-allowed opacity-50"
+                title="功能暂未开放"
               >
                 帮助中心
-              </Link>
+              </span>
 
               {/* 移动端用户状态 */}
               <hr className="border-gray-200" />

@@ -172,17 +172,17 @@ export default function HomePage() {
             <div>
               <h4 className="text-md font-semibold mb-4">产品</h4>
               <ul className="space-y-2">
-                <li><Link href="/features" className="text-gray-400 hover:text-white transition-colors">功能特性</Link></li>
-                <li><Link href="/pricing" className="text-gray-400 hover:text-white transition-colors">价格方案</Link></li>
-                <li><Link href="/demo" className="text-gray-400 hover:text-white transition-colors">产品演示</Link></li>
+                <li><span className="text-gray-500 cursor-not-allowed opacity-50" title="功能暂未开放">功能特性</span></li>
+                <li><span className="text-gray-500 cursor-not-allowed opacity-50" title="功能暂未开放">价格方案</span></li>
+                <li><span className="text-gray-500 cursor-not-allowed opacity-50" title="功能暂未开放">产品演示</span></li>
               </ul>
             </div>
             <div>
               <h4 className="text-md font-semibold mb-4">支持</h4>
               <ul className="space-y-2">
-                <li><Link href="/docs" className="text-gray-400 hover:text-white transition-colors">使用文档</Link></li>
-                <li><Link href="/help" className="text-gray-400 hover:text-white transition-colors">帮助中心</Link></li>
-                <li><Link href="/contact" className="text-gray-400 hover:text-white transition-colors">联系我们</Link></li>
+                <li><span className="text-gray-500 cursor-not-allowed opacity-50" title="功能暂未开放">使用文档</span></li>
+                <li><span className="text-gray-500 cursor-not-allowed opacity-50" title="功能暂未开放">帮助中心</span></li>
+                <li><span className="text-gray-500 cursor-not-allowed opacity-50" title="功能暂未开放">联系我们</span></li>
               </ul>
             </div>
           </div>

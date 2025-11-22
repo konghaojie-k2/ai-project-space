@@ -29,7 +29,7 @@ class FileBase(BaseModel):
     original_name: str = Field(..., description="原始文件名")
     description: Optional[str] = Field(None, description="文件描述")
     project_id: Optional[str] = Field(None, description="项目ID")
-    stage: str = Field(..., description="项目阶段")
+    stage: Optional[str] = Field(None, description="项目阶段")
     tags: List[str] = Field(default_factory=list, description="标签列表")
     is_public: bool = Field(False, description="是否公开")
     access_level: FileAccessLevel = Field(FileAccessLevel.ALL_USERS, description="访问级别")
@@ -75,9 +75,6 @@ class FileResponse(FileBase):
     view_count: int = Field(0, description="查看次数")
     download_count: int = Field(0, description="下载次数")
     like_count: int = Field(0, description="点赞次数")
-    
-    # 状态信息
-    is_processed: bool = Field(False, description="是否已处理")
     
     # 访问权限
     access_level: FileAccessLevel = Field(FileAccessLevel.ALL_USERS, description="访问级别")

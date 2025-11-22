@@ -8,6 +8,7 @@ Supabase客户端封装服务
 """
 
 import logging
+import asyncio
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 
@@ -15,6 +16,26 @@ from supabase import create_client, Client
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+async def run_supabase_query(query_func, timeout: float = 30.0):
+    """
+    在线程池中执行Supabase同步查询，避免阻塞事件循环
+    
+    Args:
+        query_func: 返回Supabase查询对象的函数
+        timeout: 查询超时时间（秒），默认30秒
+        
+    Returns:
+        查询结果
+        
+    Raises:
+        asyncio.TimeoutError: 如果查询超时
+    """
+    loop = asyncio.get_event_loop()
+    return await asyncio.wait_for(
+        loop.run_in_executor(None, query_func),
+        timeout=timeout
+    )
 
 
 def user_to_dict(user) -> Dict:
@@ -86,6 +107,10 @@ class SupabaseService:
     def is_available(self) -> bool:
         """检查Supabase服务是否可用"""
         return self.client is not None
+
+    def is_admin_available(self) -> bool:
+        """检查Supabase管理员服务是否可用"""
+        return self.admin_client is not None
 
     @property
     def admin_client_available(self) -> bool:
@@ -202,7 +227,32 @@ class SupabaseService:
             
             return None
         except Exception as e:
-            logger.error(f"用户注册失败 {email}: {e}", exc_info=True)
+            error_msg = str(e)
+            # 检查是否使用的是Demo Key（通过JWT解码检查）
+            try:
+                import base64
+                import json
+                anon_key = settings.SUPABASE_ANON_KEY or ""
+                if anon_key:
+                    # 解码JWT payload检查iss字段
+                    payload = anon_key.split('.')[1]
+                    payload += '=' * (-len(payload) % 4)
+                    decoded = base64.b64decode(payload).decode()
+                    jwt_data = json.loads(decoded)
+                    if jwt_data.get('iss') == 'supabase-demo':
+                        logger.error(f"检测到Demo Key，无法创建真实用户: {email}")
+                        logger.error("请配置真实的Supabase项目密钥到.env文件中的SUPABASE_ANON_KEY")
+                        raise ValueError("无法使用Demo Key创建用户账户，请配置真实的Supabase项目")
+            except Exception as decode_error:
+                logger.warning(f"JWT解码失败: {decode_error}")
+
+            # 在开发环境下，如果邮件发送失败但用户可能已创建，尝试获取用户信息
+            if settings.DISABLE_EMAIL_VERIFICATION and "Error sending confirmation email" in error_msg:
+                logger.warning(f"邮件发送失败，但在开发环境下尝试继续: {email}")
+                logger.info(f"用户可能已创建但邮件发送失败: {email}，在开发环境下允许继续")
+                # 返回None，让上层逻辑处理
+
+            logger.error(f"用户注册失败 {email}: {error_msg}", exc_info=True)
             return None
     
     async def admin_create_user(self, email: str, password: str, user_metadata: Optional[Dict] = None, email_confirm: bool = True) -> Optional[Dict]:
@@ -219,7 +269,7 @@ class SupabaseService:
             用户信息字典，创建失败返回None
         """
         if not self.admin_client:
-            logger.error("Supabase管理员客户端未初始化，无法创建用户")
+            logger.error("Supabase管理员客户端未初始化，无法创建用户（请检查SUPABASE_SERVICE_KEY配置）")
             return None
 
         try:
@@ -245,7 +295,13 @@ class SupabaseService:
             
             return None
         except Exception as e:
-            logger.error(f"管理员创建用户失败 {email}: {e}", exc_info=True)
+            error_msg = str(e)
+            # 401错误通常表示Service Key无效或未配置
+            if "401" in error_msg or "Unauthorized" in error_msg or "Invalid authentication credentials" in error_msg:
+                logger.error(f"管理员创建用户失败 {email}: Service Key无效或未正确配置（401 Unauthorized）")
+                logger.error("请检查.env文件中的SUPABASE_SERVICE_KEY配置是否正确")
+            else:
+                logger.error(f"管理员创建用户失败 {email}: {error_msg}", exc_info=True)
             return None
     
     async def admin_reset_password(self, email: str, new_password: str) -> bool:
@@ -409,7 +465,7 @@ class SupabaseService:
 
     async def get_profile(self, user_id: str) -> Optional[Dict]:
         """
-        获取用户档案
+        获取用户档案（性能优化：使用admin_client，限制查询字段）
 
         Args:
             user_id: 用户ID
@@ -417,11 +473,17 @@ class SupabaseService:
         Returns:
             用户档案字典，不存在返回None
         """
-        if not self.client:
+        # 优先使用admin_client以获得高性能
+        client_to_use = self.admin_client if self.admin_client else self.client
+
+        if not client_to_use:
             return None
 
         try:
-            response = self.client.table('profiles').select('*').eq('id', user_id).execute()
+            # 只查询必要的字段，避免查询大字段
+            response = await run_supabase_query(lambda: client_to_use.table('profiles').select(
+                'id, username, full_name, avatar_url, bio, is_superuser'
+            ).eq('id', user_id).execute())
 
             if response.data:
                 return response.data[0]
@@ -445,10 +507,10 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('profiles').update({
+            response = await run_supabase_query(lambda: self.client.table('profiles').update({
                 **profile_data,
                 'updated_at': datetime.utcnow().isoformat()
-            }).eq('id', user_id).execute()
+            }).eq('id', user_id).execute())
 
             if response.data:
                 return response.data[0]
@@ -475,11 +537,11 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('projects').insert({
+            response = await run_supabase_query(lambda: self.client.table('projects').insert({
                 **project_data,
                 'created_at': datetime.utcnow().isoformat(),
                 'updated_at': datetime.utcnow().isoformat()
-            }).execute()
+            }).execute())
 
             if response.data:
                 logger.info(f"项目创建成功: {project_data.get('name', 'unknown')}")
@@ -503,7 +565,7 @@ class SupabaseService:
             return []
 
         try:
-            response = self.client.table('user_projects').select('*').eq('user_id', user_id).execute()
+            response = await run_supabase_query(lambda: self.client.table('user_projects').select('*').eq('user_id', user_id).execute())
 
             return response.data or []
         except Exception as e:
@@ -524,7 +586,7 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('projects').select('*').eq('id', project_id).execute()
+            response = await run_supabase_query(lambda: self.client.table('projects').select('*').eq('id', project_id).execute())
 
             if response.data:
                 return response.data[0]
@@ -548,10 +610,10 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('projects').update({
+            response = await run_supabase_query(lambda: self.client.table('projects').update({
                 **project_data,
                 'updated_at': datetime.utcnow().isoformat()
-            }).eq('id', project_id).execute()
+            }).eq('id', project_id).execute())
 
             if response.data:
                 return response.data[0]
@@ -580,12 +642,12 @@ class SupabaseService:
             return False
 
         try:
-            response = self.client.table('project_members').insert({
+            response = await run_supabase_query(lambda: self.client.table('project_members').insert({
                 'project_id': project_id,
                 'user_id': user_id,
                 'role': role,
                 'joined_at': datetime.utcnow().isoformat()
-            }).execute()
+            }).execute())
 
             success = len(response.data) > 0
             if success:
@@ -609,12 +671,12 @@ class SupabaseService:
             return []
 
         try:
-            response = self.client.table('project_members').select(
+            response = await run_supabase_query(lambda: self.client.table('project_members').select(
                 '''
                 *,
                 user:profiles(id, username, full_name, avatar_url)
                 '''
-            ).eq('project_id', project_id).execute()
+            ).eq('project_id', project_id).execute())
 
             return response.data or []
         except Exception as e:
@@ -637,9 +699,9 @@ class SupabaseService:
             return False
 
         try:
-            response = self.client.table('project_members').update({
+            response = await run_supabase_query(lambda: self.client.table('project_members').update({
                 'role': role
-            }).eq('project_id', project_id).eq('user_id', user_id).execute()
+            }).eq('project_id', project_id).eq('user_id', user_id).execute())
 
             success = len(response.data) > 0
             if success:
@@ -664,9 +726,9 @@ class SupabaseService:
             return False
 
         try:
-            response = self.client.table('project_members').delete().eq(
+            response = await run_supabase_query(lambda: self.client.table('project_members').delete().eq(
                 'project_id', project_id
-            ).eq('user_id', user_id).execute()
+            ).eq('user_id', user_id).execute())
 
             success = len(response.data) > 0
             if success:
@@ -698,9 +760,9 @@ class SupabaseService:
                 return True
 
             # 检查项目成员角色
-            response = self.client.table('project_members').select('role').eq(
+            response = await run_supabase_query(lambda: self.client.table('project_members').select('role').eq(
                 'project_id', project_id
-            ).eq('user_id', user_id).execute()
+            ).eq('user_id', user_id).execute())
 
             if response.data:
                 user_role = response.data[0]['role']
@@ -754,11 +816,11 @@ class SupabaseService:
                 logger.warning("⚠️ 设置认证上下文失败，可能影响文件记录创建")
         
         try:
-            response = client_to_use.table('files').insert({
+            response = await run_supabase_query(lambda: client_to_use.table('files').insert({
                 **file_data,
                 'created_at': datetime.utcnow().isoformat(),
                 'updated_at': datetime.utcnow().isoformat()
-            }).execute()
+            }).execute())
 
             if response.data:
                 logger.info(f"✅ 文件记录创建成功: {file_data.get('original_name', 'unknown')}")
@@ -811,7 +873,7 @@ class SupabaseService:
             return []
 
         try:
-            response = self.client.table('files').select('*').eq('project_id', project_id).execute()
+            response = await run_supabase_query(lambda: self.client.table('files').select('*').eq('project_id', project_id).execute())
 
             return response.data or []
         except Exception as e:
@@ -836,11 +898,11 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('chat_sessions').insert({
+            response = await run_supabase_query(lambda: self.client.table('chat_sessions').insert({
                 **session_data,
                 'created_at': datetime.utcnow().isoformat(),
                 'updated_at': datetime.utcnow().isoformat()
-            }).execute()
+            }).execute())
 
             if response.data:
                 return response.data[0]
@@ -863,10 +925,10 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('chat_messages').insert({
+            response = await run_supabase_query(lambda: self.client.table('chat_messages').insert({
                 **message_data,
                 'created_at': datetime.utcnow().isoformat()
-            }).execute()
+            }).execute())
 
             if response.data:
                 return response.data[0]
@@ -889,9 +951,11 @@ class SupabaseService:
             return []
 
         try:
-            response = self.client.table('chat_messages').select('*').eq(
+            # Supabase Python客户端的order()方法不接受asc参数
+            # 默认是升序，如果要降序使用desc=True
+            response = await run_supabase_query(lambda: self.client.table('chat_messages').select('*').eq(
                 'session_id', session_id
-            ).order('created_at', asc=True).execute()
+            ).order('created_at').execute())
 
             return response.data or []
         except Exception as e:
@@ -912,9 +976,9 @@ class SupabaseService:
             return []
 
         try:
-            response = self.client.table('chat_sessions').select('*').eq(
+            response = await run_supabase_query(lambda: self.client.table('chat_sessions').select('*').eq(
                 'user_id', user_id
-            ).order('updated_at', desc=True).execute()
+            ).order('updated_at', desc=True).execute())
 
             return response.data or []
         except Exception as e:
@@ -935,9 +999,9 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('chat_sessions').select('*').eq(
+            response = await run_supabase_query(lambda: self.client.table('chat_sessions').select('*').eq(
                 'id', session_id
-            ).single().execute()
+            ).single().execute())
 
             return response.data if response.data else None
         except Exception as e:
@@ -959,10 +1023,10 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('chat_sessions').update({
+            response = await run_supabase_query(lambda: self.client.table('chat_sessions').update({
                 **update_data,
                 'updated_at': datetime.utcnow().isoformat()
-            }).eq('id', session_id).execute()
+            }).eq('id', session_id).execute())
 
             if response.data:
                 return response.data[0]
@@ -985,9 +1049,9 @@ class SupabaseService:
             return False
 
         try:
-            response = self.client.table('chat_sessions').delete().eq(
+            response = await run_supabase_query(lambda: self.client.table('chat_sessions').delete().eq(
                 'id', session_id
-            ).execute()
+            ).execute())
 
             return len(response.data) > 0 if response.data else False
         except Exception as e:
@@ -997,12 +1061,6 @@ class SupabaseService:
     async def get_chat_stats(self, user_id: Optional[str] = None) -> Dict[str, int]:
         """
         获取聊天统计信息
-
-        Args:
-            user_id: 用户ID（可选，如果提供则只统计该用户的）
-
-        Returns:
-            统计信息字典
         """
         if not self.client:
             return {
@@ -1012,54 +1070,54 @@ class SupabaseService:
             }
 
         try:
-            # 统计会话数
-            sessions_query = self.client.table('chat_sessions').select('id', count='exact')
-            if user_id:
-                sessions_query = sessions_query.eq('user_id', user_id)
-            sessions_response = sessions_query.execute()
-            total_conversations = sessions_response.count if hasattr(sessions_response, 'count') else 0
+            # 优先使用admin_client以获得高性能
+            client_to_use = self.admin_client if self.admin_client else self.client
 
-            # 统计消息数
-            messages_query = self.client.table('chat_messages').select('id', count='exact')
             if user_id:
-                # 需要通过session关联查询
-                user_sessions = await self.get_user_chat_sessions(user_id)
-                session_ids = [s['id'] for s in user_sessions]
-                if session_ids:
-                    messages_query = messages_query.in_('session_id', session_ids)
-                else:
-                    total_messages = 0
-                    ai_messages = 0
+                # 使用admin_client查询用户相关的聊天会话
+                sessions_response = await run_supabase_query(
+                    lambda: client_to_use.table('chat_sessions')
+                    .select('id')
+                    .eq('user_id', user_id)
+                    .limit(1000)
+                    .execute()
+                )
+
+                if not sessions_response.data:
                     return {
-                        'total_conversations': total_conversations,
+                        'total_conversations': 0,
                         'total_messages': 0,
                         'ai_messages': 0
                     }
-            messages_response = messages_query.execute()
-            total_messages = messages_response.count if hasattr(messages_response, 'count') else 0
 
-            # 统计AI消息数
-            ai_query = self.client.table('chat_messages').select('id', count='exact').eq('role', 'assistant')
-            if user_id:
-                user_sessions = await self.get_user_chat_sessions(user_id)
-                session_ids = [s['id'] for s in user_sessions]
-                if session_ids:
-                    ai_query = ai_query.in_('session_id', session_ids)
-                else:
-                    ai_messages = 0
-                    return {
-                        'total_conversations': total_conversations,
-                        'total_messages': total_messages,
-                        'ai_messages': 0
-                    }
-            ai_response = ai_query.execute()
-            ai_messages = ai_response.count if hasattr(ai_response, 'count') else 0
+                session_ids = [s['id'] for s in sessions_response.data]
 
-            return {
-                'total_conversations': total_conversations,
-                'total_messages': total_messages,
-                'ai_messages': ai_messages
-            }
+                # 查询消息统计
+                messages_response = await run_supabase_query(
+                    lambda: client_to_use.table('chat_messages')
+                    .select('role')
+                    .in_('session_id', session_ids)
+                    .limit(5000)
+                    .execute()
+                )
+
+                messages = messages_response.data or []
+                total_messages = len(messages)
+                ai_messages = len([m for m in messages if m.get('role') == 'assistant'])
+
+                return {
+                    'total_conversations': len(session_ids),
+                    'total_messages': total_messages,
+                    'ai_messages': ai_messages
+                }
+            else:
+                # 管理员查询所有统计（跳过以避免性能问题）
+                return {
+                    'total_conversations': 0,
+                    'total_messages': 0,
+                    'ai_messages': 0
+                }
+
         except Exception as e:
             logger.error(f"获取聊天统计失败: {e}")
             return {
@@ -1092,9 +1150,9 @@ class SupabaseService:
         try:
             status['available'] = True
 
-            # 检查数据库连接
+            # 检查数据库连接（使用更快的表）
             try:
-                response = self.client.table('profiles').select('count').limit(1).execute()
+                response = await run_supabase_query(lambda: self.client.table('files').select('count').limit(1).execute())
                 status['database'] = response.data is not None
             except:
                 status['database'] = False
@@ -1203,7 +1261,7 @@ class SupabaseService:
             return []
 
         try:
-            response = self.client.table('user_accessible_projects').select('*').execute()
+            response = await run_supabase_query(lambda: self.client.table('user_accessible_projects').select('*').execute())
 
             return response.data if response.data else []
 
@@ -1228,9 +1286,9 @@ class SupabaseService:
             return None
 
         try:
-            response = self.client.table('user_permission_summary').select('*').eq(
+            response = await run_supabase_query(lambda: self.client.table('user_permission_summary').select('*').eq(
                 'user_id', user_id
-            ).single().execute()
+            ).single().execute())
 
             return response.data if response.data else None
 
@@ -1345,8 +1403,8 @@ class SupabaseService:
                 query = query.eq('entity_type', entity_type)
             if entity_id:
                 query = query.eq('entity_id', entity_id)
-
-            response = query.execute()
+            
+            response = await run_supabase_query(lambda: query.execute())
             return response.data if response.data else []
 
         except Exception as e:
