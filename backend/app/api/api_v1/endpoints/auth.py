@@ -6,7 +6,7 @@
 基于Supabase Auth的用户认证和授权
 """
 
-from typing import Annotated, Optional
+from typing import Annotated, Optional, List, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
@@ -489,3 +489,216 @@ async def reset_password(reset_data: ResetPasswordRequest):
 
 # 注意：用户管理功能已迁移到Supabase Dashboard和数据库层面
 # 管理员可以通过Supabase Dashboard直接管理用户，或使用Supabase SQL Editor
+
+@router.get("/users", response_model=List[dict], summary="获取用户列表")
+async def get_users(
+    current_user: dict = Depends(get_current_superuser),
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None
+):
+    """
+    获取用户列表（仅管理员）
+    """
+    try:
+        if not supabase_auth_service.is_available():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="认证服务不可用"
+            )
+        
+        # 使用Supabase Admin API获取用户列表
+        users = await supabase_auth_service.list_all_users()
+        
+        # 应用搜索过滤
+        if search:
+            search_lower = search.lower()
+            users = [
+                u for u in users
+                if search_lower in u.get('email', '').lower() or
+                   search_lower in u.get('username', '').lower() or
+                   search_lower in u.get('full_name', '').lower()
+            ]
+        
+        # 应用分页
+        users = users[skip:skip + limit]
+        
+        # 转换为响应格式
+        return [
+            {
+                "id": user.get('id'),
+                "username": user.get('username'),
+                "email": user.get('email'),
+                "full_name": user.get('full_name'),
+                "avatar_url": user.get('avatar_url'),
+                "bio": user.get('bio'),
+                "phone": user.get('phone'),
+                "department": user.get('department'),
+                "position": user.get('position'),
+                "is_active": user.get('is_active', True),
+                "is_verified": user.get('email_confirmed_at') is not None,
+                "is_superuser": user.get('is_superuser', False),
+                "created_at": user.get('created_at'),
+                "updated_at": user.get('updated_at')
+            }
+            for user in users
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取用户列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取用户列表时发生错误"
+        )
+
+
+@router.get("/users/stats/summary", response_model=dict, summary="获取用户统计信息")
+async def get_user_stats(
+    current_user: dict = Depends(get_current_superuser)
+):
+    """
+    获取用户统计信息（仅管理员）
+    """
+    try:
+        if not supabase_auth_service.is_available():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="认证服务不可用"
+            )
+        
+        # 获取所有用户
+        users = await supabase_auth_service.list_all_users()
+        
+        # 计算统计信息
+        total_users = len(users)
+        active_users = sum(1 for u in users if u.get('is_active', True))
+        inactive_users = total_users - active_users
+        verified_users = sum(1 for u in users if u.get('email_confirmed_at'))
+        unverified_users = total_users - verified_users
+        admin_users = sum(1 for u in users if u.get('is_superuser', False))
+        regular_users = total_users - admin_users
+        
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "inactive_users": inactive_users,
+            "verified_users": verified_users,
+            "unverified_users": unverified_users,
+            "admin_users": admin_users,
+            "regular_users": regular_users
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取用户统计失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取用户统计时发生错误"
+        )
+
+
+@router.patch("/users/{user_id}/status", response_model=MessageResponse, summary="更新用户状态")
+async def update_user_status(
+    user_id: str,
+    is_active: bool,
+    current_user: dict = Depends(get_current_superuser)
+):
+    """
+    更新用户状态（启用/禁用）
+    """
+    try:
+        success = await supabase_auth_service.update_user_status(user_id, is_active)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="更新用户状态失败"
+            )
+        return MessageResponse(message=f"用户状态已更新为{'启用' if is_active else '禁用'}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新用户状态失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="更新用户状态时发生错误"
+        )
+
+
+@router.patch("/users/{user_id}/admin", response_model=MessageResponse, summary="更新用户管理员权限")
+async def update_user_admin_status(
+    user_id: str,
+    is_superuser: bool,
+    current_user: dict = Depends(get_current_superuser)
+):
+    """
+    设置/取消用户管理员权限
+    """
+    try:
+        success = await supabase_auth_service.update_user_admin_status(user_id, is_superuser)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="更新管理员权限失败"
+            )
+        return MessageResponse(message=f"管理员权限已{'授予' if is_superuser else '撤销'}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新管理员权限失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="更新管理员权限时发生错误"
+        )
+
+
+@router.get("/users/{user_id}/projects", response_model=List[dict], summary="获取用户参与的所有项目")
+async def get_user_projects(
+    user_id: str,
+    current_user: dict = Depends(get_current_superuser)
+):
+    """
+    获取指定用户参与的所有项目（仅管理员）
+    """
+    try:
+        if not supabase_auth_service.is_available():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="认证服务不可用"
+            )
+        
+        # 使用Supabase Service获取用户项目
+        from app.services.supabase_client import supabase_service
+        
+        # 获取用户可访问的项目（管理员可以查看任何用户的项目）
+        # 注意：这里传入is_superuser=False，因为我们要查询的是指定用户的项目，不是当前管理员的项目
+        projects = await supabase_service.get_user_accessible_projects_enhanced(
+            user_id=user_id,
+            limit=1000,  # 获取足够多的项目
+            is_superuser=False
+        )
+        
+        # 转换为响应格式
+        return [
+            {
+                "id": p.get('id'),
+                "name": p.get('name'),
+                "description": p.get('description'),
+                "status": p.get('status', 'active'),
+                "stage": p.get('stage', '售前'),
+                "is_public": p.get('is_public', False),
+                "role": p.get('role', 'member'),  # 用户在项目中的角色
+                "is_owner": p.get('is_owner', False),  # 是否是项目创建者
+                "created_at": p.get('created_at'),
+                "updated_at": p.get('updated_at')
+            }
+            for p in projects
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取用户项目列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取用户项目列表时发生错误"
+        )

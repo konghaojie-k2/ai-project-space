@@ -143,77 +143,81 @@ async def upload_files(
                 # 使用数据库返回的实际文件名
                 app_logger.info(f"🔥 文件上传成功: {file.filename} -> {file_record.stored_name} (ID: {file_record.id})")
                 
-                # 🚀 如果指定了project_id，上传到外部RAG知识库
-                if project_id and rag_client.is_available():
-                    try:
-                        app_logger.info(f"🤖 开始上传文件到外部RAG知识库: {file.filename}")
-                        
-                        # 确保项目知识库存在（如果不存在则创建）
-                        kb_name = f"project_{project_id}"
-                        app_logger.info(f"🔍 检查/创建项目知识库: {kb_name}")
+                # 🚀 如果指定了project_id，上传到外部RAG知识库（8002端口）
+                if project_id:
+                    if rag_client.is_available():
                         try:
-                            # 尝试创建知识库（如果已存在会返回相应消息）
-                            kb_result = await rag_client.create_knowledge_base(
-                                name=kb_name,
-                                description=f"项目 {project_id} 的知识库"
-                            )
-                            app_logger.info(f"📋 知识库创建结果: {kb_result}")
-                            if kb_result.get('success') or "已存在" in kb_result.get('message', ''):
-                                app_logger.info(f"✅ 项目知识库已就绪: {kb_name}")
-                            else:
-                                app_logger.warning(f"⚠️ 项目知识库创建可能失败: {kb_result.get('message', '未知错误')}")
-                        except Exception as kb_error:
-                            # 知识库创建失败不影响文件上传
-                            app_logger.error(f"❌ 检查/创建项目知识库时出错: {kb_error}，继续上传文件")
-                            import traceback
-                            app_logger.error(f"❌ 错误堆栈: {traceback.format_exc()}")
-                        
-                        # 重新读取文件数据用于RAG上传
-                        await file.seek(0)
-                        file_data = await file.read()
-                        
-                        # 构建元数据
-                        username = current_user.get('username') or current_user.get('email', 'user').split('@')[0]
-                        metadata = {
-                            "uploaded_by": username or user_id,
-                            "user_id": user_id,
-                            "upload_time": datetime.now().isoformat(),
-                            "description": description,
-                            "tags": tags_list,
-                            "content_type": file.content_type,
-                            "file_size": len(file_data),
-                            "stage": stage
-                        }
-                        
-                        # 上传到外部RAG（使用项目知识库）
-                        app_logger.info(f"🤖 准备上传到RAG知识库: {kb_name}, 文件: {file.filename}")
-                        rag_result = await rag_client.upload_file(
-                            file_content=file_data,
-                            filename=file.filename,
-                            collection_name=kb_name,  # 使用项目知识库
-                            metadata=metadata
-                        )
-                        
-                        if rag_result.success:
-                            app_logger.info(f"🤖 文件已成功上传到RAG知识库: {file.filename}, 文档ID: {rag_result.document_id}")
-                            # 创建映射记录
-                            from app.services.rag_mapping_service import rag_mapping_service
+                            app_logger.info(f"🤖 开始上传文件到外部RAG知识库（8002端口）: {file.filename}")
+                            
+                            # 确保项目知识库存在（如果不存在则创建）
+                            kb_name = f"project_{project_id}"
+                            app_logger.info(f"🔍 检查/创建项目知识库: {kb_name}")
                             try:
-                                await rag_mapping_service.create_mapping(
-                                    local_file_id=file_record.id,
-                                    external_document_id=rag_result.document_id,
-                                    external_collection_name=kb_name,  # 使用项目知识库名称
-                                    project_id=project_id,
-                                    chunk_count=rag_result.chunk_count
+                                # 尝试创建知识库（如果已存在会返回相应消息）
+                                kb_result = await rag_client.create_knowledge_base(
+                                    name=kb_name,
+                                    description=f"项目 {project_id} 的知识库"
                                 )
-                                app_logger.info(f"✅ RAG映射记录创建成功")
-                            except Exception as mapping_error:
-                                app_logger.warning(f"⚠️ RAG映射记录创建失败: {mapping_error}")
-                        else:
-                            app_logger.warning(f"🤖 文件上传到RAG知识库失败: {file.filename}, 原因: {rag_result.message}")
-                    except Exception as rag_error:
-                        app_logger.error(f"🤖 RAG上传失败: {file.filename}, 错误: {str(rag_error)}")
-                        # RAG上传失败不影响文件上传成功
+                                app_logger.info(f"📋 知识库创建结果: {kb_result}")
+                                if kb_result.get('success') or "已存在" in kb_result.get('message', ''):
+                                    app_logger.info(f"✅ 项目知识库已就绪: {kb_name}")
+                                else:
+                                    app_logger.warning(f"⚠️ 项目知识库创建可能失败: {kb_result.get('message', '未知错误')}")
+                            except Exception as kb_error:
+                                # 知识库创建失败不影响文件上传
+                                app_logger.error(f"❌ 检查/创建项目知识库时出错: {kb_error}，继续上传文件")
+                                import traceback
+                                app_logger.error(f"❌ 错误堆栈: {traceback.format_exc()}")
+                            
+                            # 重新读取文件数据用于RAG上传
+                            await file.seek(0)
+                            file_data = await file.read()
+                            
+                            # 构建元数据
+                            username = current_user.get('username') or current_user.get('email', 'user').split('@')[0]
+                            metadata = {
+                                "uploaded_by": username or user_id,
+                                "user_id": user_id,
+                                "upload_time": datetime.now().isoformat(),
+                                "description": description,
+                                "tags": tags_list,
+                                "content_type": file.content_type,
+                                "file_size": len(file_data),
+                                "stage": stage
+                            }
+                            
+                            # 上传到外部RAG服务（8002端口，使用项目知识库）
+                            app_logger.info(f"🤖 准备上传到RAG知识库（8002端口）: {kb_name}, 文件: {file.filename}")
+                            rag_result = await rag_client.upload_file(
+                                file_content=file_data,
+                                filename=file.filename,
+                                collection_name=kb_name,  # 使用项目知识库
+                                metadata=metadata
+                            )
+                            
+                            if rag_result.success:
+                                app_logger.info(f"🤖 文件已成功上传到RAG知识库（8002端口）: {file.filename}, 文档ID: {rag_result.document_id}")
+                                # 创建映射记录
+                                from app.services.rag_mapping_service import rag_mapping_service
+                                try:
+                                    await rag_mapping_service.create_mapping(
+                                        local_file_id=file_record.id,
+                                        external_document_id=rag_result.document_id,
+                                        external_collection_name=kb_name,  # 使用项目知识库名称
+                                        project_id=project_id,
+                                        chunk_count=rag_result.chunk_count
+                                    )
+                                    app_logger.info(f"✅ RAG映射记录创建成功")
+                                except Exception as mapping_error:
+                                    app_logger.warning(f"⚠️ RAG映射记录创建失败: {mapping_error}")
+                            else:
+                                app_logger.warning(f"🤖 文件上传到RAG知识库失败: {file.filename}, 原因: {rag_result.message}")
+                        except Exception as rag_error:
+                            app_logger.error(f"🤖 RAG上传失败: {file.filename}, 错误: {str(rag_error)}")
+                            # RAG上传失败不影响文件上传成功
+                    else:
+                        app_logger.warning(f"⚠️ RAG服务（8002端口）不可用，跳过文件上传到RAG知识库")
+                        app_logger.warning(f"⚠️ 提示：请检查RAG服务是否运行在8002端口，或检查RAG_API_ENDPOINT配置")
                 
             except Exception as db_error:
                 app_logger.error(f"🔥 数据库操作失败: {str(db_error)}")

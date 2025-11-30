@@ -12,6 +12,7 @@ from .endpoints.chat_rag import router as chat_rag_router
 from .endpoints.auth import router as auth_router
 from .endpoints.projects import router as projects_router
 from .endpoints.project_members import router as project_members_router
+from .endpoints.performance import router as performance_router
 
 api_router = APIRouter()
 
@@ -40,4 +41,7 @@ api_router.include_router(chat_rag_router, prefix="/chat-rag", tags=["RAG智能�
 api_router.include_router(projects_router, prefix="/projects", tags=["项目管理"])
 
 # 包含项目成员管理路由
-api_router.include_router(project_members_router, prefix="", tags=["项目成员管理"]) 
+api_router.include_router(project_members_router, prefix="", tags=["项目成员管理"])
+
+# 包含性能监控路由
+api_router.include_router(performance_router, prefix="/performance", tags=["性能监控"]) 

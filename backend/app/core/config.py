@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # ========================================
     # RAG服务配置
     # ========================================
-    RAG_API_ENDPOINT: str = "http://localhost:8001"  # 独立RAG服务的API端点
+    RAG_API_ENDPOINT: str = "http://localhost:8002"  # 独立RAG服务的API端点
     RAG_API_KEY: Optional[str] = None  # RAG服务的API密钥
     RAG_COLLECTION_NAME: str = "project_management"  # 默认知识库名称
     RAG_TIMEOUT: int = 30  # RAG服务请求超时时间（秒）
@@ -210,6 +210,27 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "./logs"
     LOG_FILE: str = "logs/app.log"
+
+    # ========================================
+    # 权限屏蔽配置（用于性能优化）
+    # ========================================
+    # 统一权限屏蔽开关（一次性屏蔽所有权限检查）
+    BYPASS_ALL_PERMISSIONS: bool = Field(
+        default=True,
+        description="是否绕过所有权限检查以提升性能（仅开发环境使用）"
+    )
+
+    # 仅保留基础认证（JWT+登录验证）
+    KEEP_BASIC_AUTH: bool = Field(
+        default=True,
+        description="权限屏蔽时是否保留基础认证（JWT+登录验证）"
+    )
+
+    # 权限屏蔽日志记录
+    LOG_PERMISSION_BYPASS: bool = Field(
+        default=True,
+        description="是否记录权限绕过的详细日志"
+    )
     
     # ========================================
     # 开发工具配置

@@ -452,9 +452,13 @@ export default function ChatPage() {
     try {
       setIsLoadingConversations(true);
       const data = await chatAPI.getConversations();
-      setConversations(data);
+      // 只有在成功获取数据时才更新会话列表，避免清空现有列表
+      if (data && Array.isArray(data)) {
+        setConversations(data);
+      }
     } catch (error) {
       console.error('加载会话列表失败:', error);
+      // 加载失败时不清空现有列表，保持用户体验
     } finally {
       setIsLoadingConversations(false);
     }
@@ -484,15 +488,17 @@ export default function ChatPage() {
   const handleSendMessage = async (content: string) => {
     if (!currentConversation) return;
 
+    // 用户消息ID使用临时ID，后端会生成真实的UUID
     const userMessage: Message = {
-      id: `msg_${Date.now()}`,
+      id: `temp_user_${Date.now()}`,
       role: 'user',
       content,
       timestamp: new Date(),
       status: 'sent'
     };
 
-    const aiMessageId = `msg_${Date.now() + 1}`;
+    // 使用临时ID，等待后端返回真实UUID后更新
+    const aiMessageId = `temp_${Date.now()}`;
     const aiMessage: Message = {
       id: aiMessageId,
       role: 'assistant',
@@ -503,6 +509,9 @@ export default function ChatPage() {
 
     setMessages(prev => [...prev, userMessage, aiMessage]);
     setIsLoading(true);
+
+    // 用于存储后端返回的真实消息ID
+    let realMessageId = aiMessageId;
 
     try {
       const request: ChatRequest = {
@@ -521,20 +530,28 @@ export default function ChatPage() {
       await chatAPI.sendMessageStream(currentConversation.id, request, {
         onStart: (messageId) => {
           console.log('AI开始回复:', messageId);
-        },
-        onContent: (chunk) => {
-          // 实时更新AI消息内容
+          // 更新为后端返回的真实UUID
+          realMessageId = messageId;
           setMessages(prev => prev.map(msg => 
             msg.id === aiMessageId 
+              ? { ...msg, id: messageId }
+              : msg
+          ));
+        },
+        onContent: (chunk) => {
+          // 实时更新AI消息内容（使用真实ID或临时ID）
+          setMessages(prev => prev.map(msg => 
+            (msg.id === aiMessageId || msg.id === realMessageId)
               ? { ...msg, content: msg.content + chunk, status: 'sending' }
               : msg
           ));
         },
         onEnd: (messageId, endData) => {
-          // 标记消息完成，并设置模型信息
+          // 标记消息完成，并设置模型信息（使用真实ID）
+          const finalMessageId = messageId || realMessageId;
           setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { ...msg, status: 'sent', model: endData?.model || 'AI助手' }
+            (msg.id === aiMessageId || msg.id === realMessageId || msg.id === finalMessageId)
+              ? { ...msg, id: finalMessageId, status: 'sent', model: endData?.model || 'AI助手' }
               : msg
           ));
           setIsLoading(false);
@@ -543,10 +560,10 @@ export default function ChatPage() {
         },
         onError: (error) => {
           console.error('流式回复失败:', error);
-          // 使用降级方案
+          // 使用降级方案（保持使用当前ID）
           const fallbackContent = generateSmartResponse(content, currentConversation.project_name);
           setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
+            (msg.id === aiMessageId || msg.id === realMessageId)
               ? { ...msg, content: fallbackContent, status: 'sent', model: '降级响应' }
               : msg
           ));
@@ -556,10 +573,10 @@ export default function ChatPage() {
 
     } catch (error) {
       console.error('发送消息失败:', error);
-      // 降级处理
+      // 降级处理（保持使用当前ID）
       const fallbackContent = generateSmartResponse(content, currentConversation.project_name);
       setMessages(prev => prev.map(msg => 
-        msg.id === aiMessageId 
+        (msg.id === aiMessageId || msg.id === realMessageId)
           ? { ...msg, content: fallbackContent, status: 'sent', model: '降级响应' }
           : msg
       ));

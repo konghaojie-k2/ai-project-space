@@ -39,41 +39,70 @@ interface DashboardStats {
   aiChats: number
 }
 
-// 获取全局文件统计
+// 获取全局文件统计（添加错误处理和超时）
 const fetchGlobalFileStats = async (): Promise<{ totalFiles: number; totalSize: number }> => {
   try {
     const { apiGet } = await import('@/lib/api');
-    // 使用 stats 接口，而不是获取所有文件列表
-    const response = await apiGet('/api/v1/files/stats/summary')
+
+    // 添加5秒超时
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+    const response = await apiGet('/api/v1/files/stats/summary', {
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
     if (response.ok) {
       const stats = await response.json()
       return {
-        totalFiles: stats.total_files || 0,
-        totalSize: stats.total_size || 0
+        totalFiles: stats.data?.total_files || 0,
+        totalSize: stats.data?.total_size || 0
       }
+    } else {
+      console.warn('获取文件统计失败，HTTP状态:', response.status)
     }
   } catch (error) {
-    console.error('获取文件统计失败:', error)
+    if (error.name === 'AbortError') {
+      console.warn('获取文件统计超时，使用默认值')
+    } else {
+      console.error('获取文件统计失败:', error)
+    }
   }
   return { totalFiles: 0, totalSize: 0 }
 }
 
-// 获取AI对话统计
+// 获取AI对话统计（添加错误处理和超时）
 const fetchChatStats = async (): Promise<{ aiChats: number }> => {
   try {
     const { apiGet } = await import('@/lib/api');
-    const response = await apiGet('/api/v1/chat/stats')
+
+    // 添加5秒超时
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+    const response = await apiGet('/api/v1/chat/stats', {
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
     if (response.ok) {
       const stats = await response.json()
       console.log('AI对话统计数据:', stats)
       return {
-        aiChats: stats.total_conversations || 0
+        aiChats: stats.data?.total_conversations || 0
       }
     } else {
-      console.error('获取AI对话统计失败，HTTP状态:', response.status)
+      console.warn('获取AI对话统计失败，HTTP状态:', response.status)
     }
   } catch (error) {
-    console.error('获取AI对话统计失败:', error)
+    if (error.name === 'AbortError') {
+      console.warn('获取AI对话统计超时，使用默认值')
+    } else {
+      console.error('获取AI对话统计失败:', error)
+    }
   }
   return { aiChats: 0 }
 }
@@ -82,6 +111,8 @@ export default function DashboardPage() {
   const { user } = useUserStore()
   const [isLoaded, setIsLoaded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [hasError, setHasError] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   const [stats, setStats] = useState<DashboardStats>({
     activeProjects: 0,
     totalFiles: 0,
@@ -92,6 +123,13 @@ export default function DashboardPage() {
 
   // 判断是否为管理员
   const isAdmin = user?.is_superuser || false
+
+  // 手动重试函数
+  const handleRetry = () => {
+    setRetryCount(prev => prev + 1)
+    setHasError(false)
+    setIsLoaded(false)
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -111,11 +149,21 @@ export default function DashboardPage() {
         // 使用同步服务获取项目统计（同步操作，不需要等待）
         const globalStats = projectSync.getGlobalStats()
 
-        // 并行执行所有API请求，提升加载速度
-        const [fileStats, chatStats] = await Promise.all([
+        // 添加超时控制的并行API请求
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Dashboard数据加载超时')), 8000)
+        })
+
+        const apiPromise = Promise.all([
           fetchGlobalFileStats(),
           fetchChatStats()
         ])
+
+        // 使用Promise.race实现超时控制
+        const [fileStats, chatStats] = await Promise.race([apiPromise, timeoutPromise]) as [
+          { totalFiles: number; totalSize: number },
+          { aiChats: number }
+        ]
 
         // 只在组件仍然挂载时更新状态
         if (isMounted) {
@@ -128,9 +176,14 @@ export default function DashboardPage() {
           })
 
           setIsLoaded(true)
+          setHasError(false)
         }
       } catch (error) {
         console.error('❌ 加载Dashboard数据失败:', error)
+        if (isMounted) {
+          setHasError(true)
+          setIsLoaded(true) // 即使出错也要显示页面
+        }
       } finally {
         isRequesting = false
         if (isMounted) {

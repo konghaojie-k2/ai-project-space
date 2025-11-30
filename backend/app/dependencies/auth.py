@@ -15,11 +15,74 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.services.supabase_auth import supabase_auth_service
 from app.services.supabase_client import supabase_service
 from app.core.config import settings
+from app.dependencies.auth_bypass import (
+    get_current_user_simple,
+    get_optional_current_user_simple,
+    bypass_all_permissions,
+    bypass_permission_dependency,
+    bypass_project_role_dependency,
+    bypass_file_access_dependency,
+    get_unlimited_projects_limit,
+    get_unlimited_file_upload_limit,
+    RequireBypassAdminPermission,
+    RequireBypassManageUsersPermission,
+    RequireBypassManageProjectsPermission,
+    RequireBypassWritePermission,
+    RequireBypassDeletePermission,
+    RequireBypassProjectOwner,
+    RequireBypassProjectAdmin,
+    RequireBypassProjectMember,
+    RequireBypassProjectViewer,
+    RequireBypassFileAccess,
+    RequireBypassProjectsLimit,
+    RequireBypassFileUploadLimit
+)
 
 logger = logging.getLogger(__name__)
 
 # HTTP Bearer认证方案
 security = HTTPBearer()
+
+def should_bypass_permissions() -> bool:
+    """
+    检查是否应该绕过权限检查
+
+    Returns:
+        是否绕过权限检查
+    """
+    return settings.BYPASS_ALL_PERMISSIONS
+
+def get_user_dependency(use_bypass: bool = False):
+    """
+    根据配置获取用户依赖
+
+    Args:
+        use_bypass: 是否使用绕过模式
+
+    Returns:
+        用户依赖函数
+    """
+    if should_bypass_permissions() or use_bypass:
+        if settings.LOG_PERMISSION_BYPASS:
+            logger.info("使用权限绕过模式的用户依赖")
+        return get_current_user_simple
+    return get_current_user
+
+def get_optional_user_dependency(use_bypass: bool = False):
+    """
+    根据配置获取可选用户依赖
+
+    Args:
+        use_bypass: 是否使用绕过模式
+
+    Returns:
+        可选用户依赖函数
+    """
+    if should_bypass_permissions() or use_bypass:
+        if settings.LOG_PERMISSION_BYPASS:
+            logger.info("使用权限绕过模式的可选用户依赖")
+        return get_optional_current_user_simple
+    return get_optional_current_user
 
 async def get_current_user_token(
     credentials: HTTPAuthorizationCredentials = Depends(security)
@@ -220,6 +283,14 @@ def require_permission(permission: str):
         current_user: Dict[str, Any] = Depends(get_current_active_user)
     ) -> Dict[str, Any]:
         """权限验证依赖函数"""
+
+        # 权限绕过检查
+        if should_bypass_permissions():
+            if settings.LOG_PERMISSION_BYPASS:
+                logger.info(f"权限绕过模式：跳过权限检查 - permission={permission}")
+            return current_user
+
+        # 正常权限检查
         has_permission = await supabase_auth_service.check_user_permission(
             current_user, permission
         )
@@ -249,6 +320,14 @@ def require_project_role(required_role: str = 'member'):
         current_user: Dict[str, Any] = Depends(get_current_active_user)
     ) -> Dict[str, Any]:
         """项目角色验证依赖函数"""
+
+        # 权限绕过检查
+        if should_bypass_permissions():
+            if settings.LOG_PERMISSION_BYPASS:
+                logger.info(f"权限绕过模式：跳过项目权限检查 - project_id={project_id}, required_role={required_role}")
+            return current_user
+
+        # 正常项目权限检查
         has_access = await supabase_auth_service.check_project_access(
             current_user, project_id, required_role
         )
@@ -275,6 +354,13 @@ def require_file_access():
         current_user: Dict[str, Any] = Depends(get_current_active_user)
     ) -> Dict[str, Any]:
         """文件访问权限验证依赖函数"""
+
+        # 权限绕过检查
+        if should_bypass_permissions():
+            if settings.LOG_PERMISSION_BYPASS:
+                logger.info(f"权限绕过模式：跳过文件访问权限检查 - file_id={file_id}")
+            return current_user
+
         if not supabase_service.is_available():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -340,6 +426,12 @@ def get_user_projects_limit(
     Returns:
         项目数量限制
     """
+    # 权限绕过检查
+    if should_bypass_permissions():
+        if settings.LOG_PERMISSION_BYPASS:
+            logger.info(f"权限绕过模式：用户 {current_user.get('id')} 获得无限制项目访问")
+        return 1000  # 给予很高的限制
+
     if current_user.get('is_superuser', False):
         return float('inf')  # 超级管理员无限制
 
@@ -366,6 +458,12 @@ def get_file_upload_limit(
     Returns:
         文件大小限制（字节）
     """
+    # 权限绕过检查
+    if should_bypass_permissions():
+        if settings.LOG_PERMISSION_BYPASS:
+            logger.info(f"权限绕过模式：用户 {current_user.get('id')} 获得无限制文件上传")
+        return settings.STORAGE_MAX_FILE_SIZE  # 使用系统最大限制
+
     if current_user.get('is_superuser', False):
         return settings.STORAGE_MAX_FILE_SIZE  # 超级管理员使用系统默认限制
 
@@ -396,10 +494,16 @@ async def validate_user_project_access(
     Returns:
         是否有访问权限
     """
+    # 权限绕过检查
+    if should_bypass_permissions():
+        if settings.LOG_PERMISSION_BYPASS:
+            logger.info(f"权限绕过模式：项目权限验证通过 - user_id={user_id}, project_id={project_id}, required_role={required_role}")
+        return True
+
     if not supabase_service.is_available():
         logger.error("Supabase服务不可用，无法验证项目权限")
         return False
-    
+
     try:
         # 检查是否为项目创建者
         # 注意：Supabase Python客户端是同步的，不需要await

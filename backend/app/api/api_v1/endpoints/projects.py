@@ -74,8 +74,15 @@ async def list_projects(
         if not user_id:
             raise HTTPException(status_code=401, detail="用户ID无效")
 
-        # 获取用户可访问的项目
-        projects = await supabase_service.get_user_accessible_projects_enhanced(user_id)
+        # 检查是否是超级管理员
+        is_superuser = current_user.get('is_superuser', False)
+        
+        # 获取用户可访问的项目（管理员可以访问所有项目）
+        projects = await supabase_service.get_user_accessible_projects_enhanced(
+            user_id, 
+            limit=limit + skip,  # 获取足够的数据以支持分页
+            is_superuser=is_superuser
+        )
 
         # 应用过滤条件
         if search:
@@ -122,6 +129,10 @@ async def create_project(
         if not user_id:
             raise HTTPException(status_code=401, detail="用户ID无效")
 
+        # 检查admin_client状态
+        logger.info(f"🔍 [创建项目] 检查admin_client状态: admin_client_available={supabase_service.admin_client_available}")
+        logger.info(f"🔍 [创建项目] admin_client对象: {supabase_service.admin_client is not None}")
+
         # 准备项目数据
         project_record = {
             'id': str(uuid.uuid4()),
@@ -134,6 +145,8 @@ async def create_project(
             'allow_ai_chat': project_data.allow_ai_chat,
             'created_by': user_id
         }
+
+        logger.info(f"📝 [创建项目] 准备创建项目: {project_data.name}, user_id: {user_id}")
 
         # 创建项目
         created_project = await supabase_service.create_project(project_record)

@@ -441,6 +441,165 @@ class SupabaseAuthService:
             logger.error(f"密码修改失败: {e}")
             return False
 
+    async def list_all_users(self) -> List[Dict]:
+        """
+        获取所有用户列表（仅管理员）
+
+        Returns:
+            用户列表
+        """
+        if not self.is_admin_available():
+            logger.error("Supabase管理员客户端未初始化，无法获取用户列表")
+            return []
+
+        try:
+            admin_client = self.supabase.admin_client
+            if not admin_client:
+                logger.error("Supabase管理员客户端不可用")
+                return []
+            
+            # 调用Supabase Admin API获取用户列表
+            response = admin_client.auth.admin.list_users()
+            
+            logger.info(f"Supabase list_users 响应类型: {type(response)}")
+            logger.info(f"Supabase list_users 响应属性: {dir(response)}")
+            
+            users = []
+            
+            # 尝试多种方式解析响应
+            if hasattr(response, 'users'):
+                logger.info(f"使用 response.users，数量: {len(response.users) if response.users else 0}")
+                users = [self._convert_user_to_dict(user) for user in response.users]
+            elif hasattr(response, 'data') and hasattr(response.data, 'users'):
+                logger.info(f"使用 response.data.users，数量: {len(response.data.users) if response.data.users else 0}")
+                users = [self._convert_user_to_dict(user) for user in response.data.users]
+            elif isinstance(response, dict):
+                if 'users' in response:
+                    logger.info(f"使用 response['users']，数量: {len(response['users']) if response['users'] else 0}")
+                    users = [self._convert_user_to_dict(user) for user in response['users']]
+                elif 'data' in response and 'users' in response['data']:
+                    logger.info(f"使用 response['data']['users']，数量: {len(response['data']['users']) if response['data']['users'] else 0}")
+                    users = [self._convert_user_to_dict(user) for user in response['data']['users']]
+            elif hasattr(response, '__iter__') and not isinstance(response, str):
+                # 如果响应本身是可迭代的（可能是列表）
+                try:
+                    users_list = list(response)
+                    logger.info(f"响应是可迭代对象，数量: {len(users_list)}")
+                    users = [self._convert_user_to_dict(user) for user in users_list]
+                except Exception as iter_error:
+                    logger.warning(f"无法将响应转换为列表: {iter_error}")
+            
+            logger.info(f"最终解析到的用户数量: {len(users)}")
+            return users
+        except Exception as e:
+            logger.error(f"获取用户列表失败: {e}", exc_info=True)
+            return []
+
+    def _convert_user_to_dict(self, user) -> Dict:
+        """将用户对象转换为字典"""
+        if isinstance(user, dict):
+            return user
+        
+        user_dict = {}
+        if hasattr(user, 'id'):
+            user_dict['id'] = user.id
+        if hasattr(user, 'email'):
+            user_dict['email'] = user.email
+        if hasattr(user, 'user_metadata'):
+            metadata = user.user_metadata if isinstance(user.user_metadata, dict) else {}
+            user_dict.update({
+                'username': metadata.get('username', ''),
+                'full_name': metadata.get('full_name', ''),
+                'avatar_url': metadata.get('avatar_url', ''),
+                'bio': metadata.get('bio', ''),
+                'department': metadata.get('department', ''),
+                'position': metadata.get('position', ''),
+                'is_superuser': metadata.get('is_superuser', False)
+            })
+        if hasattr(user, 'phone'):
+            user_dict['phone'] = user.phone
+        if hasattr(user, 'is_active'):
+            user_dict['is_active'] = user.is_active
+        if hasattr(user, 'email_confirmed_at'):
+            user_dict['email_confirmed_at'] = user.email_confirmed_at
+        if hasattr(user, 'created_at'):
+            user_dict['created_at'] = user.created_at
+        if hasattr(user, 'updated_at'):
+            user_dict['updated_at'] = user.updated_at
+        
+        return user_dict
+
+    async def update_user_status(self, user_id: str, is_active: bool) -> bool:
+        """
+        更新用户状态（启用/禁用）
+
+        Args:
+            user_id: 用户ID
+            is_active: 是否启用
+
+        Returns:
+            更新是否成功
+        """
+        if not self.is_admin_available():
+            logger.error("Supabase管理员客户端未初始化，无法更新用户状态")
+            return False
+
+        try:
+            admin_client = self.supabase.admin_client
+            if not admin_client:
+                logger.error("Supabase管理员客户端不可用")
+                return False
+            
+            response = admin_client.auth.admin.update_user_by_id(
+                user_id,
+                {"ban_duration": "none" if is_active else "876000h"}  # 禁用时设置很长的ban时间
+            )
+            return response is not None
+        except Exception as e:
+            logger.error(f"更新用户状态失败: {e}")
+            return False
+
+    async def update_user_admin_status(self, user_id: str, is_superuser: bool) -> bool:
+        """
+        更新用户管理员权限
+
+        Args:
+            user_id: 用户ID
+            is_superuser: 是否是超级管理员
+
+        Returns:
+            更新是否成功
+        """
+        if not self.is_admin_available():
+            logger.error("Supabase管理员客户端未初始化，无法更新管理员权限")
+            return False
+
+        try:
+            admin_client = self.supabase.admin_client
+            if not admin_client:
+                logger.error("Supabase管理员客户端不可用")
+                return False
+            
+            # 更新用户元数据中的is_superuser字段
+            user = admin_client.auth.admin.get_user_by_id(user_id)
+            if not user:
+                return False
+            
+            current_metadata = user.user_metadata if hasattr(user, 'user_metadata') else {}
+            if isinstance(current_metadata, dict):
+                current_metadata['is_superuser'] = is_superuser
+            else:
+                current_metadata = {'is_superuser': is_superuser}
+            
+            response = admin_client.auth.admin.update_user_by_id(
+                user_id,
+                {"user_metadata": current_metadata}
+            )
+            return response is not None
+        except Exception as e:
+            logger.error(f"更新管理员权限失败: {e}")
+            return False
+
     async def reset_password(self, email: str) -> bool:
         """
         重置用户密码（发送密码重置邮件）

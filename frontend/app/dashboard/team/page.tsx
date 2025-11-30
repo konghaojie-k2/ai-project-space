@@ -6,8 +6,10 @@ import {
   getUserStats, 
   updateUserStatus, 
   updateUserAdminStatus,
+  getUserProjects,
   User,
-  UserStats 
+  UserStats,
+  UserProject
 } from '@/lib/api/users';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -28,15 +30,17 @@ import {
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { requestManager } from '@/lib/utils/request-manager';
 import DashboardPageHeader from '@/components/layout/DashboardPageHeader';
+import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 
 // 项目成员相关类型
 interface ProjectMember {
   project_id: string;
-  user_id: number;
+  user_id: string;  // 改为字符串（UUID）
   username: string;
   email: string;
   role: 'owner' | 'admin' | 'member' | 'viewer';
   joined_at: string;
+  is_superuser?: boolean;  // 添加可选字段
 }
 
 interface Project {
@@ -73,6 +77,21 @@ export default function TeamPage() {
   const [newMemberRole, setNewMemberRole] = useState<'owner' | 'admin' | 'member' | 'viewer'>('member');
   const [showEditMemberModal, setShowEditMemberModal] = useState(false);
   const [editingMember, setEditingMember] = useState<ProjectMember | null>(null);
+  
+  // 用户项目查看相关状态
+  const [showUserProjectsModal, setShowUserProjectsModal] = useState(false);
+  const [viewingUserProjects, setViewingUserProjects] = useState<User | null>(null);
+  const [userProjects, setUserProjects] = useState<UserProject[]>([]);
+  const [loadingUserProjects, setLoadingUserProjects] = useState(false);
+  
+  // 添加成员用户选择器相关状态
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userSearchResults, setUserSearchResults] = useState<User[]>([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [selectedUserToAdd, setSelectedUserToAdd] = useState<User | null>(null);
+  
+  // 获取当前用户信息（用于判断是否为管理员）
+  const { isSuperUser } = useSupabaseAuth();
 
   // 角色图标映射
   const getRoleIcon = (role: string) => {
@@ -132,9 +151,19 @@ export default function TeamPage() {
         const usersData = await usersResponse.json();
         const statsData = await statsResponse.json();
 
-        console.log('✅ 用户数据加载成功:', { userCount: usersData?.length, stats: statsData });
+        console.log('✅ 用户数据加载成功:', { 
+          userCount: usersData?.length, 
+          usersData: usersData,
+          stats: statsData 
+        });
 
-        setUsers(usersData || []);
+        // 确保usersData是数组
+        if (Array.isArray(usersData)) {
+          setUsers(usersData);
+        } else {
+          console.warn('⚠️ 用户数据不是数组格式:', usersData);
+          setUsers([]);
+        }
         setStats(statsData || null);
       } catch (error) {
         console.error('❌ 加载用户数据失败:', error);
@@ -188,9 +217,81 @@ export default function TeamPage() {
   const handleSearch = () => {
     console.log('搜索:', searchTerm);
   };
+  
+  // 查看用户项目
+  const handleViewUserProjects = async (user: User) => {
+    setViewingUserProjects(user);
+    setShowUserProjectsModal(true);
+    setLoadingUserProjects(true);
+    
+    try {
+      console.log('📊 开始加载用户项目:', user.id);
+      const projects = await getUserProjects(user.id);
+      console.log('✅ 用户项目加载成功:', { userId: user.id, projectCount: projects.length, projects });
+      setUserProjects(projects);
+    } catch (error: any) {
+      console.error('❌ 加载用户项目失败:', error);
+      // 如果是权限错误，显示友好提示
+      if (error?.message?.includes('403') || error?.message?.includes('权限')) {
+        alert('您没有权限查看其他用户的项目信息');
+      } else {
+        alert('加载用户项目失败，请稍后重试');
+      }
+      setUserProjects([]);
+    } finally {
+      setLoadingUserProjects(false);
+    }
+  };
+  
+  // 搜索用户（用于添加成员）- 使用防抖
+  const handleSearchUsers = async (query: string) => {
+    if (!query || query.length < 2) {
+      setUserSearchResults([]);
+      return;
+    }
+    
+    setSearchingUsers(true);
+    try {
+      const results = await getUsers({ search: query, limit: 10 });
+      // 过滤掉已经是项目成员的用户（使用字符串比较，因为user_id可能是字符串或数字）
+      const filteredResults = results.filter(user => {
+        if (!selectedProject) return true;
+        return !projectMembers.some(member => 
+          String(member.user_id) === String(user.id) || 
+          member.email === user.email
+        );
+      });
+      setUserSearchResults(filteredResults);
+    } catch (error) {
+      console.error('搜索用户失败:', error);
+      setUserSearchResults([]);
+    } finally {
+      setSearchingUsers(false);
+    }
+  };
+  
+  // 防抖搜索函数
+  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
+  const debouncedSearchUsers = (query: string) => {
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    const timeout = setTimeout(() => {
+      handleSearchUsers(query);
+    }, 300); // 300ms防抖
+    setSearchTimeout(timeout);
+  };
+  
+  // 选择用户添加到项目
+  const handleSelectUserToAdd = (user: User) => {
+    setSelectedUserToAdd(user);
+    setNewMemberEmail(user.email);
+    setUserSearchQuery(user.email);
+    setUserSearchResults([]);
+  };
 
   // 切换用户状态
-  const toggleUserStatus = async (userId: number, currentStatus: boolean) => {
+  const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     try {
       const { apiRequest } = await import('@/lib/api');
       const response = await apiRequest(`/api/v1/auth/users/${userId}/status`, {
@@ -209,7 +310,7 @@ export default function TeamPage() {
   };
 
   // 切换管理员权限
-  const toggleAdminStatus = async (userId: number, currentStatus: boolean) => {
+  const toggleAdminStatus = async (userId: string, currentStatus: boolean) => {
     try {
       const { apiRequest } = await import('@/lib/api');
       const response = await apiRequest(`/api/v1/auth/users/${userId}/admin`, {
@@ -235,16 +336,24 @@ export default function TeamPage() {
 
   // 添加项目成员
   const handleAddMember = async () => {
-    if (!selectedProject || !newMemberEmail.trim()) {
-      alert('请输入有效的邮箱地址');
+    if (!selectedProject) {
+      alert('请先选择项目');
+      return;
+    }
+    
+    // 优先使用选择的用户邮箱，否则使用手动输入的邮箱
+    const emailToUse = selectedUserToAdd?.email || newMemberEmail.trim();
+    
+    if (!emailToUse) {
+      alert('请选择用户或输入有效的邮箱地址');
       return;
     }
 
     try {
-      console.log('➕ 添加项目成员:', { email: newMemberEmail, role: newMemberRole });
+      console.log('➕ 添加项目成员:', { email: emailToUse, role: newMemberRole });
       
       await apiPost(`/api/v1/projects/${selectedProject.id}/members`, {
-        email: newMemberEmail,
+        email: emailToUse,
         role: newMemberRole
       });
 
@@ -254,6 +363,9 @@ export default function TeamPage() {
       // 重置表单
       setNewMemberEmail('');
       setNewMemberRole('member');
+      setSelectedUserToAdd(null);
+      setUserSearchQuery('');
+      setUserSearchResults([]);
       setShowAddMemberModal(false);
       
       alert('成员添加成功！');
@@ -325,6 +437,13 @@ export default function TeamPage() {
   useEffect(() => {
     console.log('🔄 TeamPage useEffect 触发:', { activeTab });
     loadUsers();
+    
+    // 清理函数：组件卸载时清理防抖定时器
+    return () => {
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+    };
   }, []); // 只在组件挂载时执行一次
 
   // 单独处理项目数据加载
@@ -505,10 +624,24 @@ export default function TeamPage() {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           创建时间
                         </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          操作
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {users.map((user) => (
+                      {users.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                            <div className="flex flex-col items-center">
+                              <UsersIcon className="w-12 h-12 text-gray-400 mb-2" />
+                              <p className="text-sm">暂无用户数据</p>
+                              <p className="text-xs text-gray-400 mt-1">请检查后端日志或Supabase配置</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        users.map((user) => (
                         <tr key={user.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
@@ -555,8 +688,19 @@ export default function TeamPage() {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {formatDate(user.created_at)}
                           </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <button
+                              onClick={() => handleViewUserProjects(user)}
+                              className="text-blue-600 hover:text-blue-900 flex items-center space-x-1 transition-colors"
+                              title="查看用户参与的所有项目及角色"
+                            >
+                              <FolderIcon className="w-4 h-4" />
+                              <span>查看项目</span>
+                            </button>
+                          </td>
                         </tr>
-                      ))}
+                      ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -817,22 +961,148 @@ export default function TeamPage() {
       {/* 添加成员模态框 */}
       {showAddMemberModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               添加项目成员
             </h3>
             <div className="space-y-4">
+              {/* 用户搜索选择器 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  邮箱地址
+                  搜索并选择用户
                 </label>
-                <Input
-                  type="email"
-                  value={newMemberEmail}
-                  onChange={(e) => setNewMemberEmail(e.target.value)}
-                  placeholder="输入用户邮箱"
-                  className="w-full"
-                />
+                <div className="relative">
+                  <Input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => {
+                      const query = e.target.value;
+                      setUserSearchQuery(query);
+                      if (query.length >= 2) {
+                        debouncedSearchUsers(query);
+                      } else {
+                        setUserSearchResults([]);
+                      }
+                    }}
+                    placeholder="输入用户名或邮箱搜索..."
+                    className="w-full"
+                  />
+                  {userSearchQuery && (
+                    <button
+                      onClick={() => {
+                        setUserSearchQuery('');
+                        setSelectedUserToAdd(null);
+                        setNewMemberEmail('');
+                        setUserSearchResults([]);
+                      }}
+                      className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <span className="text-xl">×</span>
+                    </button>
+                  )}
+                </div>
+                
+                {/* 搜索结果下拉列表 */}
+                {userSearchResults.length > 0 && (
+                  <div className="mt-2 border border-gray-200 rounded-lg shadow-lg bg-white max-h-48 overflow-y-auto">
+                    {userSearchResults.map((user) => (
+                      <button
+                        key={user.id}
+                        onClick={() => handleSelectUserToAdd(user)}
+                        className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0 flex items-center space-x-3"
+                      >
+                        <div className="flex-shrink-0">
+                          {user.avatar_url ? (
+                            <img 
+                              className="h-8 w-8 rounded-full object-cover" 
+                              src={user.avatar_url} 
+                              alt={user.username}
+                            />
+                          ) : (
+                            <div className="h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center">
+                              <span className="text-xs font-medium text-gray-700">
+                                {user.username.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">
+                            {user.username}
+                          </div>
+                          <div className="text-xs text-gray-500 truncate">
+                            {user.email}
+                          </div>
+                        </div>
+                        {selectedUserToAdd?.id === user.id && (
+                          <div className="flex-shrink-0">
+                            <span className="text-blue-600">✓</span>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {/* 已选择的用户显示 */}
+                {selectedUserToAdd && (
+                  <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      {selectedUserToAdd.avatar_url ? (
+                        <img 
+                          className="h-8 w-8 rounded-full object-cover" 
+                          src={selectedUserToAdd.avatar_url} 
+                          alt={selectedUserToAdd.username}
+                        />
+                      ) : (
+                        <div className="h-8 w-8 rounded-full bg-blue-300 flex items-center justify-center">
+                          <span className="text-xs font-medium text-blue-700">
+                            {selectedUserToAdd.username.charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">
+                          {selectedUserToAdd.username}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          {selectedUserToAdd.email}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedUserToAdd(null);
+                        setNewMemberEmail('');
+                        setUserSearchQuery('');
+                      }}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <span className="text-xl">×</span>
+                    </button>
+                  </div>
+                )}
+                
+                {/* 或者手动输入邮箱 */}
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    或直接输入邮箱地址
+                  </label>
+                  <Input
+                    type="email"
+                    value={newMemberEmail}
+                    onChange={(e) => {
+                      setNewMemberEmail(e.target.value);
+                      if (e.target.value && !selectedUserToAdd) {
+                        setUserSearchQuery(e.target.value);
+                        handleSearchUsers(e.target.value);
+                      }
+                    }}
+                    placeholder="输入用户邮箱"
+                    className="w-full"
+                    disabled={!!selectedUserToAdd}
+                  />
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -856,6 +1126,9 @@ export default function TeamPage() {
                   setShowAddMemberModal(false);
                   setNewMemberEmail('');
                   setNewMemberRole('member');
+                  setSelectedUserToAdd(null);
+                  setUserSearchQuery('');
+                  setUserSearchResults([]);
                 }}
                 className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200"
               >
@@ -863,11 +1136,117 @@ export default function TeamPage() {
               </Button>
               <Button
                 onClick={handleAddMember}
-                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700"
+                disabled={!newMemberEmail && !selectedUserToAdd}
+                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 添加成员
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 用户项目列表模态框 */}
+      {showUserProjectsModal && viewingUserProjects && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {viewingUserProjects.username} 参与的项目
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {viewingUserProjects.email}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowUserProjectsModal(false);
+                  setViewingUserProjects(null);
+                  setUserProjects([]);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <span className="text-2xl">×</span>
+              </button>
+            </div>
+            
+            {loadingUserProjects ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-gray-500">加载中...</div>
+              </div>
+            ) : userProjects.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <FolderIcon className="w-16 h-16 text-gray-300 mb-4" />
+                <p className="text-gray-500">该用户尚未参与任何项目</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        项目名称
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        角色
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        状态
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        阶段
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        创建时间
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {userProjects.map((project) => (
+                      <tr key={project.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {project.name}
+                          </div>
+                          {project.description && (
+                            <div className="text-sm text-gray-500 truncate max-w-xs">
+                              {project.description}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center space-x-2">
+                            {getRoleIcon(project.role)}
+                            <span className="text-sm text-gray-900">
+                              {getRoleName(project.role)}
+                            </span>
+                            {project.is_owner && (
+                              <span className="text-xs text-yellow-600">(创建者)</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                            project.status === 'active' 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {project.status === 'active' ? '进行中' : project.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {project.stage}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatDate(project.created_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

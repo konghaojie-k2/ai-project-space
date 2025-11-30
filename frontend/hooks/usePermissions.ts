@@ -2,6 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { ProjectRole, FileAccessLevel, SystemRole } from '@/types/database'
 
+// 权限绕过模式检查
+const PERMISSION_BYPASS_MODE = process.env.NEXT_PUBLIC_PERMISSION_BYPASS === 'true'
+
+// 详细日志检查
+const LOG_PERMISSION_BYPASS = process.env.NEXT_PUBLIC_LOG_PERMISSION_BYPASS === 'true'
+
 /**
  * 增强项目权限管理Hook (基于新的权限模型)
  */
@@ -49,6 +55,14 @@ export function useProjectPermissions() {
     try {
       setLoading(true)
       setError(null)
+
+      // 权限绕过模式：所有项目权限检查都返回true
+      if (PERMISSION_BYPASS_MODE) {
+        if (process.env.NEXT_PUBLIC_LOG_PERMISSION_BYPASS === 'true') {
+          console.log('权限绕过模式：项目权限检查通过', { projectId, requiredPermission })
+        }
+        return true
+      }
 
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
@@ -570,6 +584,14 @@ export function useSystemPermissions() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return false
 
+      // 权限绕过模式：所有用户都是超级用户
+      if (PERMISSION_BYPASS_MODE) {
+        if (process.env.NEXT_PUBLIC_LOG_PERMISSION_BYPASS === 'true') {
+          console.log('权限绕过模式：超级用户权限检查通过')
+        }
+        return true
+      }
+
       // 检查用户档案中的超级管理员状态
       const { data: profile, error } = await supabase
         .from('profiles')
@@ -623,6 +645,25 @@ export function useSystemPermissions() {
 
   // 检查特定权限
   const hasPermission = useCallback(async (permission: string) => {
+    // 权限绕过模式：只绕过业务权限，保留数据查询权限
+    if (PERMISSION_BYPASS_MODE) {
+      // 只绕过业务相关的权限，保留数据访问权限
+      const businessPermissions = ['manage_users', 'manage_projects', 'delete_project', 'system_admin']
+      const isBusinessPermission = businessPermissions.includes(permission)
+
+      if (LOG_PERMISSION_BYPASS && isBusinessPermission) {
+        console.log('权限绕过模式：业务权限检查通过', permission)
+      }
+
+      // 对于数据查询相关的权限，仍然进行检查
+      const dataPermissions = ['read', 'access_dashboard', 'view_projects']
+      if (dataPermissions.includes(permission)) {
+        return false // 数据权限不绕过，让正常逻辑处理
+      }
+
+      return isBusinessPermission // 只绕过业务权限
+    }
+
     const permissions = await getUserPermissions()
     return permissions.includes(permission)
   }, [getUserPermissions])

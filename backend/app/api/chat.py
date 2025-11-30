@@ -95,21 +95,36 @@ async def get_conversations(
         
         result = []
         for conv in conversations:
-            # 获取最后一条消息
-            session_id = conv.get('id')
-            messages = await supabase_service.get_chat_session_messages(session_id)
-            last_message = messages[-1] if messages else None
-            
-            result.append(ConversationResponse(
-                id=conv.get('id'),
-                title=conv.get('title'),
-                project_id=conv.get('project_id'),
-                project_name=None,
-                last_message=last_message.get('content', '')[:100] + "..." if last_message else None,
-                message_count=len(messages),
-                created_at=conv.get('created_at'),
-                updated_at=conv.get('updated_at')
-            ))
+            try:
+                # 获取最后一条消息（如果失败，继续处理其他会话）
+                session_id = conv.get('id')
+                messages = await supabase_service.get_chat_session_messages(session_id)
+                last_message = messages[-1] if messages else None
+                
+                result.append(ConversationResponse(
+                    id=conv.get('id'),
+                    title=conv.get('title'),
+                    project_id=conv.get('project_id'),
+                    project_name=None,
+                    last_message=last_message.get('content', '')[:100] + "..." if last_message else None,
+                    message_count=len(messages),
+                    created_at=conv.get('created_at'),
+                    updated_at=conv.get('updated_at')
+                ))
+            except Exception as e:
+                # 如果获取某个会话的消息失败，记录错误但继续处理其他会话
+                logger.warning(f"获取会话 {conv.get('id')} 的消息失败: {e}")
+                # 仍然添加会话，但不包含最后一条消息
+                result.append(ConversationResponse(
+                    id=conv.get('id'),
+                    title=conv.get('title'),
+                    project_id=conv.get('project_id'),
+                    project_name=None,
+                    last_message=None,
+                    message_count=0,
+                    created_at=conv.get('created_at'),
+                    updated_at=conv.get('updated_at')
+                ))
         
         return result
         
@@ -229,7 +244,7 @@ async def send_message(
         
         # 保存用户消息到 Supabase
         user_message_data = {
-            'id': f"msg_{uuid.uuid4().hex[:8]}",
+            'id': str(uuid.uuid4()),  # 使用完整的UUID格式
             'session_id': conversation_id,
             'role': 'user',
             'content': request.messages[-1]["content"],
@@ -252,7 +267,7 @@ async def send_message(
         
         # 保存AI回复到 Supabase
         ai_message_data = {
-            'id': f"msg_{uuid.uuid4().hex[:8]}",
+            'id': str(uuid.uuid4()),  # 使用完整的UUID格式
             'session_id': conversation_id,
             'role': 'assistant',
             'content': ai_response.content,
@@ -292,7 +307,7 @@ async def send_message_stream(
         
         # 保存用户消息到 Supabase
         user_message_data = {
-            'id': f"msg_{uuid.uuid4().hex[:8]}",
+            'id': str(uuid.uuid4()),  # 使用完整的UUID格式
             'session_id': conversation_id,
             'role': 'user',
             'content': request.messages[-1]["content"],
@@ -300,8 +315,8 @@ async def send_message_stream(
         }
         await supabase_service.create_chat_message(user_message_data)
         
-        # 生成AI消息ID
-        ai_message_id = f"msg_{uuid.uuid4().hex[:8]}"
+        # 生成AI消息ID（使用完整的UUID格式）
+        ai_message_id = str(uuid.uuid4())
         ai_content = ""
         
         # 在异步生成器外部提取需要的值，避免数据库会话问题

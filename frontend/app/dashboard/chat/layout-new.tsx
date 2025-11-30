@@ -121,9 +121,13 @@ export default function ChatPageNewLayout() {
     try {
       setIsLoadingConversations(true);
       const data = await chatAPI.getConversations();
-      setConversations(data);
+      // 只有在成功获取数据时才更新会话列表，避免清空现有列表
+      if (data && Array.isArray(data)) {
+        setConversations(data);
+      }
     } catch (error) {
       console.error('加载会话列表失败:', error);
+      // 加载失败时不清空现有列表，保持用户体验
     } finally {
       setIsLoadingConversations(false);
     }
@@ -147,8 +151,9 @@ export default function ChatPageNewLayout() {
   const handleSendMessage = async (content: string) => {
     if (!currentConversation) return;
 
+    // 用户消息ID使用临时ID，后端会生成真实的UUID
     const userMessage: Message = {
-      id: `msg_${Date.now()}`,
+      id: `temp_user_${Date.now()}`,
       content,
       role: 'user',
       timestamp: new Date(),
@@ -156,7 +161,8 @@ export default function ChatPageNewLayout() {
     };
     setMessages(prev => [...prev, userMessage]);
 
-    const aiMessageId = `msg_${Date.now() + 1}`;
+    // 使用临时ID，等待后端返回真实UUID后更新
+    const aiMessageId = `temp_${Date.now()}`;
     const aiMessage: Message = {
       id: aiMessageId,
       content: '',
@@ -166,6 +172,9 @@ export default function ChatPageNewLayout() {
     };
     setMessages(prev => [...prev, aiMessage]);
     setIsLoading(true);
+
+    // 用于存储后端返回的真实消息ID
+    let realMessageId = aiMessageId;
 
     try {
       const request: ChatRequest = {
@@ -178,18 +187,28 @@ export default function ChatPageNewLayout() {
       await chatAPI.sendMessageStream(currentConversation.id, request, {
         onStart: (messageId) => {
           console.log('AI开始回复:', messageId);
-        },
-        onContent: (chunk) => {
+          // 更新为后端返回的真实UUID
+          realMessageId = messageId;
           setMessages(prev => prev.map(msg => 
             msg.id === aiMessageId 
+              ? { ...msg, id: messageId }
+              : msg
+          ));
+        },
+        onContent: (chunk) => {
+          // 实时更新AI消息内容（使用真实ID或临时ID）
+          setMessages(prev => prev.map(msg => 
+            (msg.id === aiMessageId || msg.id === realMessageId)
               ? { ...msg, content: msg.content + chunk, status: 'sending' }
               : msg
           ));
         },
         onEnd: (messageId) => {
+          // 标记消息完成（使用真实ID）
+          const finalMessageId = messageId || realMessageId;
           setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { ...msg, status: 'sent' }
+            (msg.id === aiMessageId || msg.id === realMessageId || msg.id === finalMessageId)
+              ? { ...msg, id: finalMessageId, status: 'sent' }
               : msg
           ));
           setIsLoading(false);
@@ -197,8 +216,9 @@ export default function ChatPageNewLayout() {
         },
         onError: (error) => {
           console.error('流式回复失败:', error);
+          // 保持使用当前ID
           setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
+            (msg.id === aiMessageId || msg.id === realMessageId)
               ? { ...msg, content: '抱歉，回复失败，请重试。', status: 'error' }
               : msg
           ));

@@ -190,8 +190,21 @@ class SupabaseFileService:
             # 构建存储路径
             storage_path = f"{file_path}/{stored_filename}" if file_path else stored_filename
 
+            # 优先使用admin_client（Service Key）进行Storage操作，绕过RLS策略
+            storage_client = None
+            if self.service.admin_client_available:
+                storage_client = self.service.admin_client
+                logger.info("✅ 使用admin_client上传文件到Storage（Service Key，绕过RLS）")
+            elif self.service.client:
+                storage_client = self.service.client
+                logger.warning("⚠️ admin_client不可用，使用client上传文件到Storage（可能受RLS策略限制）")
+            else:
+                logger.error("❌ Supabase客户端未初始化，无法上传文件到Storage")
+                return None
+
             # 上传到Supabase Storage
-            response = self.service.client.storage.from_(self.bucket_name).upload(
+            logger.info(f"📤 准备上传文件到Storage: {storage_path}, 使用客户端: {'admin_client' if storage_client == self.service.admin_client else 'client'}")
+            response = storage_client.storage.from_(self.bucket_name).upload(
                 path=storage_path,
                 file=file_content,
                 file_options={
@@ -221,8 +234,8 @@ class SupabaseFileService:
                 # 不直接返回None，而是尝试继续，因为可能上传已经成功
                 # 如果后续步骤失败，会在这里捕获错误
 
-            # 获取文件URL
-            file_url = self.service.client.storage.from_(self.bucket_name).get_public_url(storage_path)
+            # 获取文件URL（使用相同的客户端）
+            file_url = storage_client.storage.from_(self.bucket_name).get_public_url(storage_path)
 
             # 验证user_id格式（确保是有效的UUID）
             if not is_valid_uuid(user_id):
@@ -258,16 +271,22 @@ class SupabaseFileService:
                 }
             }
 
+            logger.info(f"📝 准备创建数据库记录，文件: {filename}, user_id: {user_id}")
+            logger.info(f"📝 检查service状态: admin_client_available={self.service.admin_client_available}")
+            
             file_record = await self.service.create_file_record(file_data, access_token=access_token)
 
             if file_record:
-                logger.info(f"文件上传成功: {filename} -> {storage_path}")
+                logger.info(f"✅ 文件上传成功: {filename} -> {storage_path}")
                 return file_record
-
-            return None
+            else:
+                logger.error(f"❌ 文件记录创建失败，返回None: {filename}")
+                return None
 
         except Exception as e:
-            logger.error(f"文件上传失败: {e}")
+            logger.error(f"❌ 文件上传失败: {e}")
+            import traceback
+            logger.error(f"❌ 错误堆栈: {traceback.format_exc()}")
             return None
 
     async def download_file(
@@ -299,9 +318,13 @@ class SupabaseFileService:
                 logger.warning(f"用户 {user_id} 无权限下载文件 {file_id}")
                 return None
 
-            # 从Storage下载
+            # 从Storage下载（优先使用admin_client）
             storage_path = file_info.get("file_path") or file_info.get("stored_name")
-            response = self.service.client.storage.from_(self.bucket_name).download(storage_path)
+            storage_client = self.service.admin_client if self.service.admin_client_available else self.service.client
+            if not storage_client:
+                logger.error("❌ Supabase客户端未初始化，无法下载文件")
+                return None
+            response = storage_client.storage.from_(self.bucket_name).download(storage_path)
 
             if response:
                 logger.info(f"文件下载成功: {file_id}")
@@ -423,10 +446,14 @@ class SupabaseFileService:
                 logger.warning(f"用户 {user_id} 无权限删除文件 {file_id}")
                 return False
 
-            # 从Storage删除
+            # 从Storage删除（优先使用admin_client）
             storage_path = file_info.get("file_path") or file_info.get("stored_name")
+            storage_client = self.service.admin_client if self.service.admin_client_available else self.service.client
+            if not storage_client:
+                logger.error("❌ Supabase客户端未初始化，无法删除文件")
+                return False
             try:
-                self.service.client.storage.from_(self.bucket_name).remove([storage_path])
+                storage_client.storage.from_(self.bucket_name).remove([storage_path])
             except Exception as storage_error:
                 logger.warning(f"从Storage删除文件失败（继续删除数据库记录）: {storage_error}")
 

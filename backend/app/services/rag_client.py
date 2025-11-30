@@ -207,7 +207,9 @@ class RAGServiceClient:
             # 不设置Content-Type，让httpx自动设置multipart boundary
             headers = {k: v for k, v in self.headers.items() if k != 'Content-Type'}
 
-            async with httpx.AsyncClient(timeout=self.config.timeout * 2) as client:
+            # 上传文件时使用较长的超时时间（文件可能很大）
+            upload_timeout = httpx.Timeout(self.config.timeout * 2, connect=10.0)
+            async with httpx.AsyncClient(timeout=upload_timeout) as client:
                 # 使用正确的端点：/api/v1/knowledge-bases/{kb_name}/chunks/upload
                 upload_url = f"{self.base_url}/api/v1/knowledge-bases/{kb_name}/chunks/upload"
                 logger.info(f"📤 RAG上传请求URL: {upload_url}")
@@ -240,21 +242,37 @@ class RAGServiceClient:
                     )
                 
                 logger.info(f"✅ RAG文件上传任务已创建: {filename}, task_id: {task_id}, 知识库: {kb_name}")
-                
-                # 轮询任务状态直到完成
-                max_wait_time = self.config.timeout * 2  # 最大等待时间
-                poll_interval = 1  # 轮询间隔（秒）
-                elapsed_time = 0
-                
+            
+            # 轮询任务状态时使用独立的客户端，设置更合理的超时
+            # 每次查询任务状态使用较短的超时（5秒），但整体轮询时间可以很长
+            max_wait_time = self.config.timeout * 4  # 最大等待时间（增加到120秒，用于大文件处理）
+            poll_interval = 2  # 轮询间隔（秒），增加到2秒减少请求频率
+            poll_timeout = httpx.Timeout(5.0, connect=5.0)  # 每次轮询请求的超时时间（5秒）
+            elapsed_time = 0
+            
+            async with httpx.AsyncClient(timeout=poll_timeout) as poll_client:
                 while elapsed_time < max_wait_time:
                     await asyncio.sleep(poll_interval)
                     elapsed_time += poll_interval
                     
-                    # 查询任务状态
-                    status_response = await client.get(
-                        f"{self.base_url}/api/v1/tasks/{task_id}",
-                        headers=self.headers
-                    )
+                    try:
+                        # 查询任务状态（使用较短的超时时间）
+                        status_response = await poll_client.get(
+                            f"{self.base_url}/api/v1/tasks/{task_id}",
+                            headers=self.headers,
+                            timeout=poll_timeout
+                        )
+                    except httpx.ReadTimeout:
+                        # 单次轮询超时，但继续轮询（可能是服务暂时繁忙）
+                        logger.warning(f"⚠️ 轮询任务状态超时（{elapsed_time}秒），继续等待...")
+                        continue
+                    except httpx.ConnectTimeout:
+                        # 连接超时，可能是RAG服务不可用
+                        logger.error(f"❌ 无法连接到RAG服务，停止轮询")
+                        return RAGUploadResponse(
+                            success=False,
+                            message="无法连接到RAG服务"
+                        )
                     
                     if status_response.status_code == 404:
                         # 任务不存在，可能已完成并被清理

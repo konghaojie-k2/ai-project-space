@@ -4,6 +4,9 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { AlertCircle, Lock, Shield } from 'lucide-react'
 
+// 权限绕过模式检查
+const PERMISSION_BYPASS_MODE = process.env.NEXT_PUBLIC_PERMISSION_BYPASS === 'true'
+
 interface EnhancedPermissionGuardProps {
   children: React.ReactNode
   permission?: string
@@ -32,6 +35,15 @@ export function EnhancedPermissionGuard({
   const router = useRouter()
   const [checking, setChecking] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
+
+  // 权限绕过模式：直接返回子组件
+  if (PERMISSION_BYPASS_MODE) {
+    // 记录权限绕过日志
+    if (process.env.NEXT_PUBLIC_LOG_PERMISSION_BYPASS === 'true') {
+      console.log('权限绕过模式：跳过权限检查', { permission, projectId, projectPermission })
+    }
+    return <>{children}</>
+  }
 
   const { hasPermission: hasSystemPermission, loading: systemLoading } = useSystemPermissions()
   const { hasProjectPermission: checkProjectPermission, loading: projectLoading } = useProjectPermissions()
