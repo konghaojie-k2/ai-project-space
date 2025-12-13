@@ -20,13 +20,6 @@ from app.services.ai_service import ai_service
 from app.services.permission_cache import permission_cache
 
 
-# 配置matplotlib中文显示 - 暂时注释掉
-# matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
-# matplotlib.rcParams['axes.unicode_minus'] = False
-# plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
-# plt.rcParams['axes.unicode_minus'] = False
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""

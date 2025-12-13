@@ -17,6 +17,7 @@ from loguru import logger
 
 from ..services.ai_service import ai_service
 from ..services.supabase_client import supabase_service
+from ..services.langgraph_agent import langgraph_agent
 
 # 简单的内存缓存，用于聊天统计API（5秒缓存）
 _chat_stats_cache = {
@@ -25,7 +26,7 @@ _chat_stats_cache = {
     "user_id": None
 }
 from typing import Dict, Any
-from ..models.chat import (
+from ..schemas.chat import (
     ChatRequest, 
     ChatResponse, 
     MessageResponse, 
@@ -586,3 +587,297 @@ async def fix_old_messages(
     except Exception as e:
         logger.error(f"修复旧消息失败: {e}")
         raise HTTPException(status_code=500, detail=f"修复旧消息失败: {str(e)}")
+
+# ===== LangGraph Agent API =====
+
+@router.post("/conversations/{conversation_id}/messages/langgraph", response_model=ChatResponse)
+async def send_message_langgraph(
+    conversation_id: str,
+    request: ChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """发送消息（使用LangGraph Agent）"""
+    try:
+        # 验证会话存在
+        conversation = await supabase_service.get_chat_session(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+        # 保存用户消息
+        user_message_data = {
+            'id': str(uuid.uuid4()),
+            'session_id': conversation_id,
+            'role': 'user',
+            'content': request.messages[-1]["content"],
+            'created_at': datetime.utcnow().isoformat()
+        }
+        await supabase_service.create_chat_message(user_message_data)
+
+        # 使用LangGraph处理
+        user_query = request.messages[-1]["content"]
+        project_id = request.project_id or conversation.get('project_id')
+
+        logger.info(f"🤖 LangGraph处理消息: 会话={conversation_id}, 项目={project_id}")
+
+        agent_result = await langgraph_agent.process_message(
+            message=user_query,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            user_id=str(current_user.get('id')),
+            is_admin=current_user.get('is_superuser', False)
+        )
+
+        # 保存AI回复
+        ai_message_data = {
+            'id': str(uuid.uuid4()),
+            'session_id': conversation_id,
+            'role': 'assistant',
+            'content': agent_result['response'],
+            'created_at': datetime.utcnow().isoformat(),
+            'metadata': {
+                "model": "langgraph_agent",
+                "intent_type": agent_result['intent_type'],
+                "confidence": agent_result['confidence'],
+                "processing_time": agent_result['processing_time'],
+                "status": agent_result['status']
+            }
+        }
+        await supabase_service.create_chat_message(ai_message_data)
+
+        # 更新会话
+        await supabase_service.update_chat_session(conversation_id, {
+            'updated_at': datetime.utcnow().isoformat()
+        })
+
+        # 返回响应
+        return ChatResponse(
+            content=agent_result['response'],
+            sources=agent_result['sources'],
+            model="langgraph_agent",
+            usage={
+                "intent_type": agent_result['intent_type'],
+                "confidence": agent_result['confidence'],
+                "processing_time": agent_result['processing_time'],
+                "sources_count": len(agent_result['sources'])
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"LangGraph消息处理失败: {e}")
+        raise HTTPException(status_code=500, detail="消息处理失败")
+
+@router.post("/conversations/{conversation_id}/messages/langgraph/stream")
+async def send_message_langgraph_stream(
+    conversation_id: str,
+    request: ChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """发送消息（LangGraph流式响应）"""
+    try:
+        # 验证会话存在
+        conversation = await supabase_service.get_chat_session(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+        # 保存用户消息
+        user_message_data = {
+            'id': str(uuid.uuid4()),
+            'session_id': conversation_id,
+            'role': 'user',
+            'content': request.messages[-1]["content"],
+            'created_at': datetime.utcnow().isoformat()
+        }
+        await supabase_service.create_chat_message(user_message_data)
+
+        # 生成AI消息ID
+        ai_message_id = str(uuid.uuid4())
+        ai_content = ""
+
+        # 提取用户信息
+        user_id = str(current_user.get('id'))
+        is_admin = current_user.get('is_superuser', False)
+        user_query = request.messages[-1]["content"]
+        project_id = request.project_id or conversation.get('project_id')
+
+        logger.info(f"🌊 LangGraph流式处理: 会话={conversation_id}, 项目={project_id}")
+
+        async def generate_stream():
+            nonlocal ai_content
+
+            try:
+                # 发送开始事件
+                start_event = {
+                    "message_id": ai_message_id,
+                    "type": "start",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "conversation_id": conversation_id,
+                    "model": "langgraph_agent"
+                }
+                yield f"data: {json.dumps(start_event, ensure_ascii=False)}\n\n"
+
+                # 获取完整响应（使用非流式处理）
+                agent_result = await langgraph_agent.process_message(
+                    message=user_query,
+                    conversation_id=conversation_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    is_admin=is_admin
+                )
+
+                response = agent_result['response']
+                ai_content = response
+
+                # 智能分块输出
+                buffer = ""
+                import re
+
+                # 按句子和代码块分割
+                chunks = []
+                parts = re.split(r'(```[\s\S]*?```)', response)
+
+                for part in parts:
+                    if part.startswith('```'):
+                        chunks.append(part)
+                    else:
+                        sentences = re.split(r'([.!?。！？\n]+)', part)
+                        for i in range(0, len(sentences), 2):
+                            if i < len(sentences):
+                                sentence = sentences[i]
+                                if i + 1 < len(sentences):
+                                    sentence += sentences[i + 1]
+                                if sentence.strip():
+                                    chunks.append(sentence)
+
+                # 流式输出chunks
+                for chunk in chunks:
+                    if chunk.strip():
+                        buffer += chunk
+
+                        # 发送内容事件
+                        content_event = {
+                            "id": ai_message_id,
+                            "role": "assistant",
+                            "content": chunk,
+                            "type": "content",
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                        yield f"data: {json.dumps(content_event, ensure_ascii=False)}\n\n"
+
+                        await asyncio.sleep(0.05)
+
+                # 发送剩余缓冲内容
+                if buffer:
+                    content_event = {
+                        "id": ai_message_id,
+                        "role": "assistant",
+                        "content": buffer,
+                        "type": "content",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    yield f"data: {json.dumps(content_event, ensure_ascii=False)}\n\n"
+
+                # 保存AI回复到数据库
+                ai_message_data = {
+                    'id': ai_message_id,
+                    'session_id': conversation_id,
+                    'role': 'assistant',
+                    'content': ai_content,
+                    'created_at': datetime.utcnow().isoformat(),
+                    'metadata': {
+                        "model": "langgraph_agent",
+                        "intent_type": agent_result['intent_type'],
+                        "confidence": agent_result['confidence'],
+                        "processing_time": agent_result['processing_time'],
+                        "status": agent_result['status'],
+                        "streaming": True
+                    }
+                }
+                await supabase_service.create_chat_message(ai_message_data)
+
+                # 更新会话
+                await supabase_service.update_chat_session(conversation_id, {
+                    'updated_at': datetime.utcnow().isoformat()
+                })
+
+                # 发送完成信号
+                end_event = {
+                    "message_id": ai_message_id,
+                    "role": "assistant",
+                    "content": ai_content,
+                    "type": "end",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "total_tokens": len(ai_content.split()),
+                    "model": "langgraph_agent",
+                    "usage": {
+                        "intent_type": agent_result['intent_type'],
+                        "confidence": agent_result['confidence'],
+                        "processing_time": agent_result['processing_time'],
+                        "sources_count": len(agent_result['sources'])
+                    }
+                }
+                yield f"data: {json.dumps(end_event, ensure_ascii=False)}\n\n"
+
+                # 发送完成标识
+                yield f"data: [DONE]\n\n"
+
+            except Exception as e:
+                logger.error(f"LangGraph流式服务调用失败: {e}")
+                # 发送错误信息
+                error_event = {
+                    "id": ai_message_id,
+                    "role": "assistant",
+                    "content": f"抱歉，LangGraph服务暂时不可用。您的问题：{user_query}",
+                    "type": "error",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "X-Accel-Buffering": "no"  # 禁用nginx缓冲
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"LangGraph流式消息失败: {e}")
+        raise HTTPException(status_code=500, detail="流式消息处理失败")
+
+@router.get("/langgraph/health")
+async def langgraph_health_check():
+    """LangGraph Agent健康检查"""
+    try:
+        health_info = await langgraph_agent.health_check()
+        return health_info
+
+    except Exception as e:
+        logger.error(f"LangGraph健康检查失败: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+@router.post("/langgraph/config")
+async def get_langgraph_config():
+    """获取LangGraph配置信息"""
+    try:
+        from ..core.langgraph_config import langgraph_config
+
+        return {
+            "enabled": langgraph_config.enabled,
+            "fallback_enabled": langgraph_config.fallback_enabled,
+            "confidence_threshold": langgraph_config.confidence_threshold,
+            "max_execution_time": langgraph_config.max_execution_time,
+            "enable_streaming": langgraph_config.enable_streaming,
+            "checkpoint_backend": langgraph_config.checkpoint_backend
+        }
+
+    except Exception as e:
+        logger.error(f"获取LangGraph配置失败: {e}")
+        raise HTTPException(status_code=500, detail="获取配置失败")

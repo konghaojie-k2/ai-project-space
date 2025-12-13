@@ -1,47 +1,15 @@
-import io
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+文件工具函数
+提供文件类型验证、大小验证等基础功能
+注意：文件内容提取功能已由外部RAG服务处理，不再需要本地提取库
+"""
+
 import mimetypes
-from typing import Optional, List
+from typing import Optional
 from pathlib import Path
 from loguru import logger
-
-try:
-    import magic
-    HAS_MAGIC = True
-except ImportError:
-    HAS_MAGIC = False
-    logger.warning("python-magic未安装或libmagic库缺失，无法根据内容检测文件类型")
-
-# 文件内容提取相关导入
-try:
-    import pypdf
-    import pdfplumber
-    HAS_PDF = True
-except ImportError:
-    HAS_PDF = False
-    logger.warning("PDF处理库未安装，无法提取PDF内容")
-
-try:
-    from docx import Document
-    HAS_DOCX = True
-except ImportError:
-    HAS_DOCX = False
-    logger.warning("python-docx未安装，无法提取Word文档内容")
-
-try:
-    import openpyxl
-    import pandas as pd
-    HAS_EXCEL = True
-except ImportError:
-    HAS_EXCEL = False
-    logger.warning("Excel处理库未安装，无法提取Excel内容")
-
-try:
-    from PIL import Image
-    import pytesseract
-    HAS_OCR = True
-except ImportError:
-    HAS_OCR = False
-    logger.warning("OCR库未安装，无法进行图片文字识别")
 
 # 支持的文件类型
 SUPPORTED_FILE_TYPES = {
@@ -108,6 +76,7 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024   # 10MB
 MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500MB
 
+
 def get_file_type(filename: str) -> Optional[str]:
     """
     根据文件名获取MIME类型
@@ -125,25 +94,6 @@ def get_file_type(filename: str) -> Optional[str]:
         logger.error(f"获取文件类型失败: {e}")
         return None
 
-def get_file_type_by_content(file_content: bytes) -> Optional[str]:
-    """
-    根据文件内容获取MIME类型
-    
-    Args:
-        file_content: 文件内容
-        
-    Returns:
-        Optional[str]: MIME类型
-    """
-    if not HAS_MAGIC:
-        return None
-        
-    try:
-        mime_type = magic.from_buffer(file_content, mime=True)
-        return mime_type
-    except Exception as e:
-        logger.error(f"根据内容获取文件类型失败: {e}")
-        return None
 
 def validate_file_type(filename: str) -> bool:
     """
@@ -169,6 +119,7 @@ def validate_file_type(filename: str) -> bool:
         logger.error(f"验证文件类型失败: {e}")
         return False
 
+
 def validate_file_size(file_size: int, file_type: Optional[str] = None) -> bool:
     """
     验证文件大小是否符合限制
@@ -193,144 +144,6 @@ def validate_file_size(file_size: int, file_type: Optional[str] = None) -> bool:
         logger.error(f"验证文件大小失败: {e}")
         return False
 
-def extract_text_from_pdf(file_stream: io.BytesIO) -> str:
-    """
-    从PDF文件提取文本
-    
-    Args:
-        file_stream: PDF文件流
-        
-    Returns:
-        str: 提取的文本内容
-    """
-    if not HAS_PDF:
-        return ""
-    
-    try:
-        text = ""
-        
-        # 首先尝试使用pdfplumber
-        try:
-            import pdfplumber
-            with pdfplumber.open(file_stream) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-        except Exception as e:
-            logger.warning(f"pdfplumber提取失败，尝试pypdf: {e}")
-            
-            # 回退到pypdf
-            file_stream.seek(0)
-            try:
-                reader = pypdf.PdfReader(file_stream)
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-            except Exception as e2:
-                logger.error(f"pypdf提取也失败: {e2}")
-        
-        return text.strip()
-        
-    except Exception as e:
-        logger.error(f"PDF文本提取失败: {e}")
-        return ""
-
-def extract_text_from_docx(file_stream: io.BytesIO) -> str:
-    """
-    从Word文档提取文本
-    
-    Args:
-        file_stream: Word文档流
-        
-    Returns:
-        str: 提取的文本内容
-    """
-    if not HAS_DOCX:
-        return ""
-    
-    try:
-        doc = Document(file_stream)
-        text = ""
-        
-        # 提取段落文本
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        
-        # 提取表格文本
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    text += cell.text + "\t"
-                text += "\n"
-        
-        return text.strip()
-        
-    except Exception as e:
-        logger.error(f"Word文档文本提取失败: {e}")
-        return ""
-
-def extract_text_from_xlsx(file_stream: io.BytesIO) -> str:
-    """
-    从Excel文件提取文本
-    
-    Args:
-        file_stream: Excel文件流
-        
-    Returns:
-        str: 提取的文本内容
-    """
-    if not HAS_EXCEL:
-        return ""
-    
-    try:
-        # 使用openpyxl读取Excel
-        workbook = openpyxl.load_workbook(file_stream)
-        text = ""
-        
-        for sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-            text += f"工作表: {sheet_name}\n"
-            
-            for row in sheet.iter_rows(values_only=True):
-                row_text = []
-                for cell in row:
-                    if cell is not None:
-                        row_text.append(str(cell))
-                    else:
-                        row_text.append("")
-                text += "\t".join(row_text) + "\n"
-            
-            text += "\n"
-        
-        return text.strip()
-        
-    except Exception as e:
-        logger.error(f"Excel文本提取失败: {e}")
-        return ""
-
-def extract_text_from_image(file_stream: io.BytesIO) -> str:
-    """
-    从图片提取文本（OCR）
-    
-    Args:
-        file_stream: 图片文件流
-        
-    Returns:
-        str: 提取的文本内容
-    """
-    if not HAS_OCR:
-        return ""
-    
-    try:
-        image = Image.open(file_stream)
-        text = pytesseract.image_to_string(image, lang='chi_sim+eng')
-        return text.strip()
-        
-    except Exception as e:
-        logger.error(f"图片OCR提取失败: {e}")
-        return ""
 
 def generate_file_hash(file_content: bytes) -> str:
     """
@@ -348,6 +161,7 @@ def generate_file_hash(file_content: bytes) -> str:
     except Exception as e:
         logger.error(f"生成文件哈希失败: {e}")
         return ""
+
 
 def get_file_category(file_type: str) -> str:
     """
@@ -383,6 +197,7 @@ def get_file_category(file_type: str) -> str:
         logger.error(f"获取文件分类失败: {e}")
         return 'other'
 
+
 def format_file_size(size_bytes: int) -> str:
     """
     格式化文件大小
@@ -410,6 +225,7 @@ def format_file_size(size_bytes: int) -> str:
     except Exception as e:
         logger.error(f"格式化文件大小失败: {e}")
         return f"{size_bytes} B"
+
 
 def is_safe_filename(filename: str) -> bool:
     """
@@ -441,6 +257,7 @@ def is_safe_filename(filename: str) -> bool:
     except Exception as e:
         logger.error(f"检查文件名安全性失败: {e}")
         return False
+
 
 def sanitize_filename(filename: str) -> str:
     """
@@ -475,4 +292,4 @@ def sanitize_filename(filename: str) -> str:
         
     except Exception as e:
         logger.error(f"清理文件名失败: {e}")
-        return "unnamed_file" 
+        return "unnamed_file"

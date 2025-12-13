@@ -64,7 +64,7 @@ const fetchGlobalFileStats = async (): Promise<{ totalFiles: number; totalSize: 
       console.warn('获取文件统计失败，HTTP状态:', response.status)
     }
   } catch (error) {
-    if (error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       console.warn('获取文件统计超时，使用默认值')
     } else {
       console.error('获取文件统计失败:', error)
@@ -98,7 +98,7 @@ const fetchChatStats = async (): Promise<{ aiChats: number }> => {
       console.warn('获取AI对话统计失败，HTTP状态:', response.status)
     }
   } catch (error) {
-    if (error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       console.warn('获取AI对话统计超时，使用默认值')
     } else {
       console.error('获取AI对话统计失败:', error)

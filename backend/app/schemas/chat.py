@@ -1,65 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-聊天相关数据模型
+聊天相关的Pydantic模式
 """
 
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, String, DateTime, Text, Integer, ForeignKey, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
 
-from .base import Base
-
-
-class Conversation(Base):
-    """会话模型 - 对应数据库表 chat_sessions"""
-    __tablename__ = "chat_sessions"
-
-    id = Column(String, primary_key=True, index=True)
-    title = Column(String, nullable=True)  # 数据库中是nullable
-    project_id = Column(String, nullable=True)
-    user_id = Column(String, nullable=False)  # 数据库中是not null
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # 关联消息
-    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
-
-
-class ChatMessage(Base):
-    """聊天消息模型 - 对应数据库表 chat_messages"""
-    __tablename__ = "chat_messages"
-
-    id = Column(String, primary_key=True, index=True)
-    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)  # 使用session_id
-    content = Column(Text, nullable=False)
-    role = Column(String, nullable=False)  # 'user' 或 'assistant'
-    created_at = Column(DateTime, default=datetime.utcnow)  # 数据库中使用created_at
-    # Python属性名为message_metadata，数据库列名为metadata（避免metadata保留字冲突）
-    message_metadata = Column("metadata", JSON, nullable=True)
-    
-    # 关联会话
-    conversation = relationship("Conversation", back_populates="messages")
-    
-    # 向后兼容属性
-    @property
-    def conversation_id(self):
-        """向后兼容：返回session_id"""
-        return self.session_id
-    
-    @property
-    def timestamp(self):
-        """向后兼容：返回created_at"""
-        return self.created_at
-    
-    @property
-    def meta_data(self):
-        """向后兼容：返回message_metadata（避免与SQLAlchemy Base.metadata冲突）"""
-        return self.message_metadata
-
-
-# Pydantic模型用于API序列化
 
 class ChatMessageBase(BaseModel):
     """聊天消息基础模型"""
@@ -168,4 +116,5 @@ class ProcessDocumentsRequest(BaseModel):
     project_id: str
     file_paths: List[str]
     chunk_size: int = Field(default=1000, ge=100, le=4000)
-    chunk_overlap: int = Field(default=200, ge=0, le=1000) 
+    chunk_overlap: int = Field(default=200, ge=0, le=1000)
+
