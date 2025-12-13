@@ -6,6 +6,7 @@ AI聊天API路由 - 数据库持久化版本
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncGenerator
@@ -519,7 +520,7 @@ async def get_chat_stats(
     """
     try:
         user_id = str(current_user.get('id'))
-        current_time = asyncio.get_event_loop().time()
+        current_time = time.time()
 
         # 检查缓存（5秒有效期）
         if (_chat_stats_cache["data"] and

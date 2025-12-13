@@ -1,6 +1,7 @@
 from typing import List, Optional
 from pathlib import Path
 import uuid
+import time
 from datetime import datetime
 import asyncio
 
@@ -598,7 +599,7 @@ async def get_file_stats(
     try:
         is_superuser = current_user.get('is_superuser', False)
         user_id = str(current_user.get('id'))
-        current_time = asyncio.get_event_loop().time()
+        current_time = time.time()
 
         # 检查缓存（5秒有效期）
         cache_key = f"admin_{user_id}" if is_superuser else f"user_{user_id}"
