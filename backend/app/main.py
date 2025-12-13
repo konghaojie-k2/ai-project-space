@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging, app_logger
 from app.api.api_v1.api import api_router
 from app.services.ai_service import ai_service
+from app.services.permission_cache import permission_cache
 
 
 # 配置matplotlib中文显示 - 暂时注释掉
@@ -31,6 +32,11 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     try:
         app_logger.info("🚀 AI项目管理系统 v0.1.0 启动中...")
+
+        # 初始化权限缓存服务
+        app_logger.info("🔧 初始化权限缓存服务...")
+        await permission_cache.initialize()
+
         app_logger.info("✅ 应用启动完成")
         yield
     except Exception as e:
@@ -42,6 +48,8 @@ async def lifespan(app: FastAPI):
 
 def create_application() -> FastAPI:
     """创建FastAPI应用"""
+    # 初始化日志配置
+    setup_logging()
     
     app = FastAPI(
         title="AI项目管理系统",

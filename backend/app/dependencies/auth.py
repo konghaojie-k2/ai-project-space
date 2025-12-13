@@ -264,7 +264,8 @@ async def get_optional_current_user(
         # 提取Bearer token
         if authorization.startswith("Bearer "):
             token = authorization[7:]
-            return await supabase_auth_service.validate_token(token)
+            result = await supabase_auth_service.validate_token(token)
+            return result
         return None
     except Exception:
         return None
@@ -367,10 +368,13 @@ def require_file_access():
                 detail="存储服务不可用"
             )
 
-        # 获取文件信息
-        file_info = await supabase_service.client.table('files').select('*').eq(
-            'id', file_id
-        ).single().execute()
+        # 获取文件信息 - 使用异步包装
+        from app.services.supabase_client import run_supabase_query
+        file_info = await run_supabase_query(
+            lambda: supabase_service.client.table('files').select('*').eq(
+                'id', file_id
+            ).single().execute()
+        )
 
         if not file_info.data:
             raise HTTPException(
@@ -505,19 +509,23 @@ async def validate_user_project_access(
         return False
 
     try:
-        # 检查是否为项目创建者
-        # 注意：Supabase Python客户端是同步的，不需要await
-        project = supabase_service.client.table('projects').select('created_by').eq(
-            'id', project_id
-        ).single().execute()
+        # 检查是否为项目创建者 - 使用异步包装
+        from app.services.supabase_client import run_supabase_query
+        project = await run_supabase_query(
+            lambda: supabase_service.client.table('projects').select('created_by').eq(
+                'id', project_id
+            ).single().execute()
+        )
 
         if project.data and project.data.get('created_by') == user_id:
             return True
 
-        # 检查项目成员权限
-        member = supabase_service.client.table('project_members').select('role').eq(
-            'project_id', project_id
-        ).eq('user_id', user_id).single().execute()
+        # 检查项目成员权限 - 使用异步包装
+        member = await run_supabase_query(
+            lambda: supabase_service.client.table('project_members').select('role').eq(
+                'project_id', project_id
+            ).eq('user_id', user_id).single().execute()
+        )
 
         if member.data:
             user_role = member.data.get('role')

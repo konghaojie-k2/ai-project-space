@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List
 from uuid import UUID
 from loguru import logger
 
-from app.services.supabase_client import supabase_service
+from app.services.supabase_client import supabase_service, run_supabase_query
 
 
 class RAGMappingService:
@@ -64,9 +64,11 @@ class RAGMappingService:
             if external_kb_id:
                 mapping_data["external_kb_id"] = external_kb_id
 
-            response = supabase_service.client.table(self.table_name).insert(
-                mapping_data
-            ).execute()
+            response = await run_supabase_query(
+                lambda: supabase_service.client.table(self.table_name).insert(
+                    mapping_data
+                ).execute()
+            )
 
             if response.data:
                 logger.info(
@@ -101,14 +103,15 @@ class RAGMappingService:
             return None
 
         try:
-            query = supabase_service.client.table(self.table_name).select("*").eq(
-                "local_file_id", local_file_id
-            )
-
-            if collection_name:
-                query = query.eq("external_collection_name", collection_name)
-
-            response = query.execute()
+            def _query():
+                query = supabase_service.client.table(self.table_name).select("*").eq(
+                    "local_file_id", local_file_id
+                )
+                if collection_name:
+                    query = query.eq("external_collection_name", collection_name)
+                return query.execute()
+            
+            response = await run_supabase_query(_query)
 
             if response.data and len(response.data) > 0:
                 # 如果指定了collection_name，返回第一个匹配的记录
@@ -137,9 +140,11 @@ class RAGMappingService:
             return None
 
         try:
-            response = supabase_service.client.table(self.table_name).select("*").eq(
-                "external_document_id", external_document_id
-            ).execute()
+            response = await run_supabase_query(
+                lambda: supabase_service.client.table(self.table_name).select("*").eq(
+                    "external_document_id", external_document_id
+                ).execute()
+            )
 
             if response.data and len(response.data) > 0:
                 return response.data[0]
@@ -168,14 +173,15 @@ class RAGMappingService:
             return []
 
         try:
-            query = supabase_service.client.table(self.table_name).select("*").eq(
-                "project_id", project_id
-            )
-
-            if collection_name:
-                query = query.eq("external_collection_name", collection_name)
-
-            response = query.order("created_at", desc=True).execute()
+            def _query():
+                query = supabase_service.client.table(self.table_name).select("*").eq(
+                    "project_id", project_id
+                )
+                if collection_name:
+                    query = query.eq("external_collection_name", collection_name)
+                return query.order("created_at", desc=True).execute()
+            
+            response = await run_supabase_query(_query)
 
             return response.data if response.data else []
 
@@ -202,9 +208,11 @@ class RAGMappingService:
             return False
 
         try:
-            response = supabase_service.client.table(self.table_name).update({
-                "chunk_count": chunk_count
-            }).eq("id", mapping_id).execute()
+            response = await run_supabase_query(
+                lambda: supabase_service.client.table(self.table_name).update({
+                    "chunk_count": chunk_count
+                }).eq("id", mapping_id).execute()
+            )
 
             if response.data:
                 logger.info(f"映射记录chunk_count更新成功: mapping_id={mapping_id}, chunk_count={chunk_count}")
@@ -236,19 +244,23 @@ class RAGMappingService:
             return False
 
         try:
-            query = supabase_service.client.table(self.table_name).delete()
-
-            if mapping_id:
-                query = query.eq("id", mapping_id)
-            elif local_file_id:
-                query = query.eq("local_file_id", local_file_id)
-            elif external_document_id:
-                query = query.eq("external_document_id", external_document_id)
-            else:
+            def _query():
+                query = supabase_service.client.table(self.table_name).delete()
+                if mapping_id:
+                    query = query.eq("id", mapping_id)
+                elif local_file_id:
+                    query = query.eq("local_file_id", local_file_id)
+                elif external_document_id:
+                    query = query.eq("external_document_id", external_document_id)
+                else:
+                    return None
+                return query.execute()
+            
+            if not mapping_id and not local_file_id and not external_document_id:
                 logger.error("删除映射记录失败：必须提供mapping_id、local_file_id或external_document_id之一")
                 return False
 
-            response = query.execute()
+            response = await run_supabase_query(_query)
 
             logger.info(f"映射记录删除成功: mapping_id={mapping_id}, local_file_id={local_file_id}, external_document_id={external_document_id}")
             return True
@@ -292,9 +304,11 @@ class RAGMappingService:
             }
 
         try:
-            response = supabase_service.client.table(self.table_name).select(
-                "chunk_count"
-            ).eq("external_collection_name", collection_name).execute()
+            response = await run_supabase_query(
+                lambda: supabase_service.client.table(self.table_name).select(
+                    "chunk_count"
+                ).eq("external_collection_name", collection_name).execute()
+            )
 
             mappings = response.data if response.data else []
             document_count = len(mappings)

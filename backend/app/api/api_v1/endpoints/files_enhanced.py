@@ -265,11 +265,13 @@ async def share_file(
                 detail="只有文件上传者可以分享文件"
             )
 
-        # 查找目标用户
-        from app.services.supabase_client import supabase_service
-        target_user_response = supabase_service.client.table('profiles').select(
-            'id', 'username', 'full_name', 'email'
-        ).eq('email', share_request.user_email).single().execute()
+        # 查找目标用户 - 使用异步包装
+        from app.services.supabase_client import supabase_service, run_supabase_query
+        target_user_response = await run_supabase_query(
+            lambda: supabase_service.client.table('profiles').select(
+                'id', 'username', 'full_name', 'email'
+            ).eq('email', share_request.user_email).single().execute()
+        )
 
         if not target_user_response.data:
             raise HTTPException(

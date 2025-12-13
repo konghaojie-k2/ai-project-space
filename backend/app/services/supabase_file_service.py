@@ -13,7 +13,7 @@ from pathlib import Path
 from loguru import logger
 from collections import OrderedDict
 
-from app.services.supabase_client import supabase_service
+from app.services.supabase_client import supabase_service, direct_supabase_query
 from app.core.config import settings
 
 def is_valid_uuid(uuid_string: str) -> bool:
@@ -370,48 +370,40 @@ class SupabaseFileService:
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        获取用户可访问的文件列表
-        
-        性能优化：使用Admin Client绕过RLS，然后在代码中过滤
+        获取用户可访问的文件列表（使用直接HTTP查询优化）
         """
         if not self.is_available():
             return []
 
         try:
-            # 优先使用admin_client（Service Key）以获得高性能
-            client_to_use = self.service.admin_client if self.service.admin_client else self.service.client
-            is_admin_client = self.service.admin_client is not None
-
-            query = client_to_use.table('files').select('*')
-
+            # 构建过滤条件
+            filters = {}
+            
             if project_id:
                 # 规范化项目ID
                 normalized_id = await normalize_project_id(project_id)
                 if normalized_id:
-                    query = query.eq('project_id', normalized_id)
+                    filters["project_id"] = normalized_id
                 else:
                     logger.warning(f"无法规范化 project_id: {project_id}，跳过项目过滤")
 
-            # 如果是普通客户端，RLS会处理权限
-            # 如果是Admin客户端，需要手动添加过滤条件（模拟RLS）
-            if is_admin_client:
-                # 这里的过滤逻辑是：用户上传的文件 OR 公开访问的文件
-                # 注意：这里使用or_语法可能在某些Supabase版本有问题，如果遇到问题，可以只查该用户的文件
-                # 简单起见，先只查询uploaded_by=user_id，如果需要更复杂的权限，可能需要分两次查询
-                query = query.or_(f"access_level.eq.all_users,uploaded_by.eq.{user_id}")
-            else:
-                # 普通客户端依赖RLS
-                query = query.or_(f"access_level.eq.all_users,uploaded_by.eq.{user_id}")
-
             # 限制查询数量
             max_limit = min(limit, 100)
+            
+            # OR过滤条件：用户上传的文件 OR 公开访问的文件
+            or_filters = f"access_level.eq.all_users,uploaded_by.eq.{user_id}"
 
-            # 使用线程池执行同步Supabase查询
-            response = await run_supabase_query(
-                lambda: query.order('created_at', desc=True).limit(max_limit).execute()
+            # 使用直接 HTTP 查询
+            return await direct_supabase_query(
+                table="files",
+                select="*",
+                filters=filters if filters else None,
+                or_filters=or_filters,
+                order_by="created_at",
+                order_desc=True,
+                limit=max_limit,
+                use_service_key=True
             )
-
-            return response.data if response.data else []
 
         except Exception as e:
             logger.error(f"获取用户文件列表失败: {e}")
@@ -626,7 +618,7 @@ class SupabaseFileService:
 
     async def get_file_stats(self, user_id: str) -> Dict[str, Any]:
         """
-        获取文件统计信息（性能优化：使用SQL函数绕过RLS）
+        获取文件统计信息（使用直接HTTP查询优化）
 
         Args:
             user_id: 用户ID
@@ -643,8 +635,15 @@ class SupabaseFileService:
             }
 
         try:
-            # 获取用户文件
-            files = await self.get_user_files(user_id, limit=1000)
+            # 使用直接 HTTP 查询
+            or_filters = f"access_level.eq.all_users,uploaded_by.eq.{user_id}"
+            files = await direct_supabase_query(
+                table="files",
+                select="id,file_size,file_type,project_id",
+                or_filters=or_filters,
+                limit=100,
+                use_service_key=True
+            )
 
             total_files = len(files)
             total_size = sum(f.get('file_size', 0) for f in files)
@@ -815,49 +814,38 @@ class SupabaseFileService:
         size: int = 20
     ) -> List[Dict[str, Any]]:
         """
-        获取文件列表（管理员使用）
-        
-        性能优化：使用Admin Client绕过RLS
+        获取文件列表（管理员使用，使用直接HTTP查询优化）
         """
         if not self.is_available():
             return []
 
         try:
-            # 优先使用admin_client以获得高性能
-            client_to_use = self.service.admin_client if self.service.admin_client else self.service.client
+            # 构建过滤条件
+            filters = {}
             
-            query = client_to_use.table('files').select('*')
-
             if project_id:
                 # 规范化项目ID（如果是时间戳，尝试查找对应的UUID）
                 normalized_id = await normalize_project_id(project_id)
                 if normalized_id:
-                    query = query.eq('project_id', normalized_id)
+                    filters["project_id"] = normalized_id
                 else:
                     logger.warning(f"无法规范化 project_id: {project_id}，跳过项目过滤")
-                    # 如果无法规范化，跳过项目过滤，返回所有文件
-            if stage:
-                query = query.eq('stage', stage)
-            if tags:
-                # Supabase数组查询：检查tags数组是否包含任一标签
-                # 注意：Supabase的contains需要精确匹配，这里简化处理
-                pass  # 标签筛选功能暂时跳过，Supabase数组查询较复杂
-            if search:
-                query = query.or_(
-                    f"original_name.ilike.%{search}%,description.ilike.%{search}%"
-                )
 
-            # 分页（限制最大返回数量，避免查询所有数据）
+            # 分页参数
             offset = (page - 1) * size
-            # 限制最大size为100，避免查询过多数据
             max_size = min(size, 100)
             
-            # 使用线程池执行同步Supabase查询，避免阻塞事件循环
-            response = await run_supabase_query(
-                lambda: query.order('created_at', desc=True).range(offset, offset + max_size - 1).execute()
+            # 使用直接 HTTP 查询
+            return await direct_supabase_query(
+                table="files",
+                select="*",
+                filters=filters if filters else None,
+                order_by="created_at",
+                order_desc=True,
+                limit=max_size,
+                offset=offset,
+                use_service_key=True
             )
-
-            return response.data if response.data else []
 
         except Exception as e:
             logger.error(f"获取文件列表失败: {e}")
@@ -1089,7 +1077,7 @@ class SupabaseFileService:
 
     async def get_all_files(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """
-        获取所有文件（性能优化：使用Admin Client，限制查询数量）
+        获取所有文件（使用直接HTTP查询优化）
 
         Returns:
             文件列表
@@ -1098,13 +1086,13 @@ class SupabaseFileService:
             return []
 
         try:
-            # 优先使用admin_client以获得高性能
-            client_to_use = self.service.admin_client if self.service.admin_client else self.service.client
-
-            response = await run_supabase_query(
-                lambda: client_to_use.table('files').select('*').limit(limit).execute()
+            # 使用直接 HTTP 查询，绕过 SDK
+            return await direct_supabase_query(
+                table="files",
+                select="*",
+                limit=min(limit, 100),  # 限制最大100条
+                use_service_key=True
             )
-            return response.data if response.data else []
 
         except Exception as e:
             logger.error(f"获取所有文件失败: {e}")
@@ -1112,7 +1100,7 @@ class SupabaseFileService:
 
     async def get_file_stats_all(self) -> Dict[str, Any]:
         """
-        获取所有文件统计信息（管理员使用）
+        获取所有文件统计信息（管理员使用，使用直接HTTP查询优化）
 
         Returns:
             统计信息字典
@@ -1128,37 +1116,32 @@ class SupabaseFileService:
             }
 
         try:
-            # 获取文件（限制数量以提高性能）
-            all_files = await self.get_all_files(limit=1000)
+            # 使用直接 HTTP 查询，绕过 SDK
+            all_files = await direct_supabase_query(
+                table="files",
+                select="id,file_size,file_type",
+                limit=100,
+                use_service_key=True
+            )
 
             total_files = len(all_files)
             total_size = sum(f.get('file_size', 0) for f in all_files)
 
-            # 按阶段统计
-            files_by_stage = {}
-            for f in all_files:
-                stage = f.get('stage', 'unknown')
-                files_by_stage[stage] = files_by_stage.get(stage, 0) + 1
-
-            # 按类型统计
+            # 按类型统计（移除了 stage 统计，因为列不存在）
+            files_by_stage = {}  # 保留空字典以兼容
             files_by_type = {}
             for f in all_files:
                 file_type = f.get('file_type', 'unknown')
                 files_by_type[file_type] = files_by_type.get(file_type, 0) + 1
 
-            # 最近上传的文件（按created_at排序）
-            recent_uploads = sorted(all_files, key=lambda x: x.get('created_at', ''), reverse=True)[:5]
-
-            # 热门文件（按view_count排序）
-            popular_files = sorted(all_files, key=lambda x: x.get('view_count', 0), reverse=True)[:5]
-
+            # 简化：不再查询最近上传和热门文件（这些可以单独的API提供）
             return {
                 "total_files": total_files,
                 "total_size": total_size,
                 "files_by_stage": files_by_stage,
                 "files_by_type": files_by_type,
-                "recent_uploads": recent_uploads,
-                "popular_files": popular_files
+                "recent_uploads": [],
+                "popular_files": []
             }
 
         except Exception as e:

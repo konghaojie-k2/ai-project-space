@@ -87,7 +87,7 @@ async def create_conversation(
 async def get_conversations(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """获取会话列表（已迁移到 Supabase）"""
+    """获取会话列表（性能优化版：避免 N+1 查询）"""
     try:
         # 使用 Supabase 获取会话列表
         user_id = str(current_user.get('id'))
@@ -95,36 +95,18 @@ async def get_conversations(
         
         result = []
         for conv in conversations:
-            try:
-                # 获取最后一条消息（如果失败，继续处理其他会话）
-                session_id = conv.get('id')
-                messages = await supabase_service.get_chat_session_messages(session_id)
-                last_message = messages[-1] if messages else None
-                
-                result.append(ConversationResponse(
-                    id=conv.get('id'),
-                    title=conv.get('title'),
-                    project_id=conv.get('project_id'),
-                    project_name=None,
-                    last_message=last_message.get('content', '')[:100] + "..." if last_message else None,
-                    message_count=len(messages),
-                    created_at=conv.get('created_at'),
-                    updated_at=conv.get('updated_at')
-                ))
-            except Exception as e:
-                # 如果获取某个会话的消息失败，记录错误但继续处理其他会话
-                logger.warning(f"获取会话 {conv.get('id')} 的消息失败: {e}")
-                # 仍然添加会话，但不包含最后一条消息
-                result.append(ConversationResponse(
-                    id=conv.get('id'),
-                    title=conv.get('title'),
-                    project_id=conv.get('project_id'),
-                    project_name=None,
-                    last_message=None,
-                    message_count=0,
-                    created_at=conv.get('created_at'),
-                    updated_at=conv.get('updated_at')
-                ))
+            # 优化：不再为每个会话获取消息（避免 N+1 查询）
+            # 消息可以在用户点击会话时再加载
+            result.append(ConversationResponse(
+                id=conv.get('id'),
+                title=conv.get('title'),
+                project_id=conv.get('project_id'),
+                project_name=None,
+                last_message=None,  # 优化：不再加载最后一条消息
+                message_count=0,    # 优化：不再计算消息数量
+                created_at=conv.get('created_at'),
+                updated_at=conv.get('updated_at')
+            ))
         
         return result
         

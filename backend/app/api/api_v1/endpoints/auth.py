@@ -49,12 +49,21 @@ async def login(
     - **email**: 用户邮箱
     - **password**: 用户密码
     """
+    import time
+    start_time = time.time()
+    perf_log = {}  # 性能日志字典
+
     try:
-        # 使用Supabase认证用户
+        logger.info(f"🔐 开始登录流程: {login_data.email}")
+
+        # 步骤1: 认证用户
+        step_start = time.time()
+        logger.info("📊 步骤1: 开始认证用户...")
         auth_result = await supabase_auth_service.authenticate_user(
             login_data.email,
             login_data.password
         )
+        perf_log['authenticate_user'] = time.time() - step_start
 
         if not auth_result:
             raise HTTPException(
@@ -63,9 +72,12 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # 步骤2: 提取用户信息
+        step_start = time.time()
         user = auth_result.get('user')
         access_token = auth_result.get('access_token')
         refresh_token = auth_result.get('refresh_token')
+        perf_log['extract_auth_result'] = time.time() - step_start
 
         # 直接使用authenticate_user返回的用户信息，避免重复API调用
         # authenticate_user已经返回了完整的用户信息，不需要再调用get_current_user
@@ -76,6 +88,8 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # 步骤3: 处理用户数据
+        step_start = time.time()
         # 从user中提取信息，优先使用user_metadata
         user_metadata = user.get('user_metadata', {})
         email = user.get('email', '')
@@ -91,8 +105,10 @@ async def login(
         avatar_url = user_metadata.get('avatar_url') or user.get('avatar_url')
         email_confirmed_at = user.get('email_confirmed_at')
         is_verified = email_confirmed_at is not None
+        perf_log['process_user_data'] = time.time() - step_start
 
-        # 创建响应（使用authenticate_user返回的数据，避免额外的API调用）
+        # 步骤4: 创建响应
+        step_start = time.time()
         token_response = TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -115,14 +131,34 @@ async def login(
                 "updated_at": user.get('updated_at') or datetime.utcnow()
             }
         )
+        perf_log['create_response'] = time.time() - step_start
 
-        logger.info(f"用户登录成功: {username or email}")
+        total_time = time.time() - start_time
+        
+        # 输出性能详情
+        perf_details = []
+        for key, value in perf_log.items():
+            if isinstance(value, float):
+                perf_details.append(f"{key}={value:.3f}s")
+        perf_str = ", ".join(perf_details)
+        
+        logger.info(f"✅ 登录成功: {username or email}, 总耗时: {total_time:.3f}s")
+        logger.info(f"📊 性能详情: {perf_str}")
+
         return token_response
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"登录失败: {str(e)}")
+        error_time = time.time() - start_time
+        # 输出性能详情以便定位问题
+        perf_details = []
+        for key, value in perf_log.items():
+            if isinstance(value, float):
+                perf_details.append(f"{key}={value:.3f}s")
+        perf_str = ", ".join(perf_details) if perf_details else "无性能数据"
+        logger.error(f"❌ 登录失败，总耗时: {error_time:.3f}s, 错误: {str(e)}")
+        logger.error(f"📊 失败前性能详情: {perf_str}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="登录过程中发生错误"

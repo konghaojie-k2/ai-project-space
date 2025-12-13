@@ -13,6 +13,8 @@ from .endpoints.auth import router as auth_router
 from .endpoints.projects import router as projects_router
 from .endpoints.project_members import router as project_members_router
 from .endpoints.performance import router as performance_router
+from .endpoints.permissions import router as permissions_router
+from .endpoints.auth_optimized import router as auth_optimized_router
 
 api_router = APIRouter()
 
@@ -44,4 +46,10 @@ api_router.include_router(projects_router, prefix="/projects", tags=["项目管�
 api_router.include_router(project_members_router, prefix="", tags=["项目成员管理"])
 
 # 包含性能监控路由
-api_router.include_router(performance_router, prefix="/performance", tags=["性能监控"]) 
+api_router.include_router(performance_router, prefix="/performance", tags=["性能监控"])
+
+# 包含权限管理路由
+api_router.include_router(permissions_router, prefix="/permissions", tags=["权限管理"])
+
+# 包含优化认证路由
+api_router.include_router(auth_optimized_router, prefix="/auth", tags=["认证优化"]) 

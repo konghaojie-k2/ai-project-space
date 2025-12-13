@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from fastapi import HTTPException, status
 
-from app.services.supabase_client import supabase_service
+from app.services.supabase_client import supabase_service, run_supabase_query, direct_supabase_query
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -443,53 +443,46 @@ class SupabaseAuthService:
 
     async def list_all_users(self) -> List[Dict]:
         """
-        获取所有用户列表（仅管理员）
+        获取所有用户列表（使用直接HTTP查询优化）
 
         Returns:
             用户列表
         """
-        if not self.is_admin_available():
-            logger.error("Supabase管理员客户端未初始化，无法获取用户列表")
-            return []
-
         try:
-            admin_client = self.supabase.admin_client
-            if not admin_client:
-                logger.error("Supabase管理员客户端不可用")
-                return []
+            # 直接从 profiles 表查询用户信息，比 Auth Admin API 更快
+            profiles = await direct_supabase_query(
+                table="profiles",
+                select="id,username,full_name,avatar_url,bio,is_superuser,system_role,is_active,created_at,updated_at",
+                order_by="created_at",
+                order_desc=True,
+                limit=500,
+                use_service_key=True
+            )
             
-            # 调用Supabase Admin API获取用户列表
-            response = admin_client.auth.admin.list_users()
+            logger.info(f"从profiles表获取用户数量: {len(profiles)}")
             
-            logger.info(f"Supabase list_users 响应类型: {type(response)}")
-            logger.info(f"Supabase list_users 响应属性: {dir(response)}")
-            
+            # 转换为用户格式
             users = []
+            for profile in profiles:
+                users.append({
+                    'id': profile.get('id'),
+                    'username': profile.get('username', ''),
+                    'full_name': profile.get('full_name', ''),
+                    'avatar_url': profile.get('avatar_url', ''),
+                    'bio': profile.get('bio', ''),
+                    'is_superuser': profile.get('is_superuser', False),
+                    'system_role': profile.get('system_role', 'user'),
+                    'is_active': profile.get('is_active', True),
+                    'created_at': profile.get('created_at'),
+                    'updated_at': profile.get('updated_at'),
+                    # 这些字段从 profiles 表无法获取，设为默认值
+                    'email': '',  # 需要从 auth.users 表获取
+                    'email_confirmed_at': None,
+                    'phone': '',
+                    'department': '',
+                    'position': ''
+                })
             
-            # 尝试多种方式解析响应
-            if hasattr(response, 'users'):
-                logger.info(f"使用 response.users，数量: {len(response.users) if response.users else 0}")
-                users = [self._convert_user_to_dict(user) for user in response.users]
-            elif hasattr(response, 'data') and hasattr(response.data, 'users'):
-                logger.info(f"使用 response.data.users，数量: {len(response.data.users) if response.data.users else 0}")
-                users = [self._convert_user_to_dict(user) for user in response.data.users]
-            elif isinstance(response, dict):
-                if 'users' in response:
-                    logger.info(f"使用 response['users']，数量: {len(response['users']) if response['users'] else 0}")
-                    users = [self._convert_user_to_dict(user) for user in response['users']]
-                elif 'data' in response and 'users' in response['data']:
-                    logger.info(f"使用 response['data']['users']，数量: {len(response['data']['users']) if response['data']['users'] else 0}")
-                    users = [self._convert_user_to_dict(user) for user in response['data']['users']]
-            elif hasattr(response, '__iter__') and not isinstance(response, str):
-                # 如果响应本身是可迭代的（可能是列表）
-                try:
-                    users_list = list(response)
-                    logger.info(f"响应是可迭代对象，数量: {len(users_list)}")
-                    users = [self._convert_user_to_dict(user) for user in users_list]
-                except Exception as iter_error:
-                    logger.warning(f"无法将响应转换为列表: {iter_error}")
-            
-            logger.info(f"最终解析到的用户数量: {len(users)}")
             return users
         except Exception as e:
             logger.error(f"获取用户列表失败: {e}", exc_info=True)

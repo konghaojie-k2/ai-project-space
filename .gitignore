@@ -343,3 +343,4 @@ backend/logs/ai_service*.log
 *.txt
 # sql
 *.sql
+*.md
