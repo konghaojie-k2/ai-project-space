@@ -53,13 +53,13 @@ const navigation = [
     current: false
   },
   {
-    name: '知识笔记',
+    name: '模板库',
     href: '/dashboard/notes',
     icon: BookOpenIcon,
     current: false
   },
   {
-    name: '数据分析',
+    name: '智能文档',
     href: '/dashboard/analytics',
     icon: ChartBarIcon,
     current: false

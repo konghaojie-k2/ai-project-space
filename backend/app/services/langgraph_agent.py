@@ -75,8 +75,8 @@ class LangGraphAgent:
             # 配置thread_id用于状态持久化
             config = {"configurable": {"thread_id": conversation_id or "default"}}
 
-            # 执行工作流
-            result = self.workflow.invoke(initial_state, config=config)
+            # 执行工作流（使用异步调用以支持异步节点）
+            result = await self.workflow.ainvoke(initial_state, config=config)
 
             processing_time = time.time() - start_time
 
@@ -159,8 +159,8 @@ class LangGraphAgent:
             # 构建恢复命令
             resume_command = Command(resume=clarification_responses)
 
-            # 恢复执行
-            result = self.workflow.invoke(resume_command, config=config)
+            # 恢复执行（使用异步调用）
+            result = await self.workflow.ainvoke(resume_command, config=config)
 
             processing_time = time.time() - start_time
 

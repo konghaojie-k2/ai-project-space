@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   UsersIcon,
   UserIcon,
@@ -69,11 +69,28 @@ export default function ProjectMembersTooltip({
     return roleMap[role as keyof typeof roleMap] || role;
   };
 
+  // 使用 ref 追踪当前加载的 projectId，防止重复请求
+  const loadedProjectIdRef = useRef<string | null>(null);
+  const isRequestingRef = useRef(false);
+
+  // 当 projectId 变化时，重置状态
+  useEffect(() => {
+    if (loadedProjectIdRef.current !== projectId) {
+      loadedProjectIdRef.current = null;
+      setMembers([]);
+      setLoading(false);
+    }
+  }, [projectId]);
+
   // 加载项目成员
   const loadMembers = async () => {
-    if (loading || members.length > 0) return;
+    // 如果正在加载、已有数据且是同一个项目，或者正在请求中，则跳过
+    if (isRequestingRef.current || (loading && members.length > 0 && loadedProjectIdRef.current === projectId)) {
+      return;
+    }
     
     try {
+      isRequestingRef.current = true;
       setLoading(true);
       const { apiGet } = await import('@/lib/api');
       const response = await apiGet(`/api/v1/projects/${projectId}/members`);
@@ -81,11 +98,13 @@ export default function ProjectMembersTooltip({
       if (response.ok) {
         const data = await response.json();
         setMembers(data);
+        loadedProjectIdRef.current = projectId;
       }
     } catch (error) {
       console.error('加载项目成员失败:', error);
     } finally {
       setLoading(false);
+      isRequestingRef.current = false;
     }
   };
 

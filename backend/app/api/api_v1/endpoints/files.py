@@ -327,10 +327,10 @@ async def get_file(
         if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
-        # 权限检查：基于新的访问级别系统
+        # 权限检查：基于新的访问级别系统（传递file_data避免重复查询）
         user_id = current_user.get('id')
         is_superuser = current_user.get('is_superuser', False)
-        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser, file_info=file_data):
             raise HTTPException(status_code=403, detail="无权限访问此文件")
         
         # 确保所有必需字段都有默认值
@@ -375,23 +375,25 @@ async def download_file(
         if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
-        # 权限检查：基于新的访问级别系统
+        # 权限检查：基于新的访问级别系统（传递file_data避免重复查询）
         user_id = current_user.get('id')
         is_superuser = current_user.get('is_superuser', False)
-        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser, file_info=file_data):
             raise HTTPException(status_code=403, detail="无权限下载此文件")
         
-        # 从Supabase Storage下载文件
+        # 从Supabase Storage下载文件（传递file_data避免重复查询）
         file_content = await supabase_file_service.download_file(
             file_id=file_id,
-            user_id=str(user_id)
+            user_id=str(user_id),
+            file_info=file_data
         )
         
         if not file_content:
             raise HTTPException(status_code=500, detail="文件下载失败")
         
-        # 更新下载次数
-        await supabase_file_service.increment_download_count(file_id)
+        # 更新下载次数（后台异步执行，不阻塞下载响应）
+        import asyncio
+        asyncio.create_task(supabase_file_service.increment_download_count(file_id, file_info=file_data))
         
         # 处理文件名编码问题
         import urllib.parse
@@ -429,16 +431,17 @@ async def preview_file(
         if not file_data:
             raise HTTPException(status_code=404, detail="文件不存在")
         
-        # 权限检查
+        # 权限检查（传递file_data避免重复查询）
         user_id = current_user.get('id')
         is_superuser = current_user.get('is_superuser', False)
-        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser):
+        if not await supabase_file_service.user_can_access_file(file_id, str(user_id), is_superuser, file_info=file_data):
             raise HTTPException(status_code=403, detail="无权限预览此文件")
         
-        # 从Supabase Storage下载文件
+        # 从Supabase Storage下载文件（传递file_data避免重复查询）
         file_content = await supabase_file_service.download_file(
             file_id=file_id,
-            user_id=str(user_id)
+            user_id=str(user_id),
+            file_info=file_data
         )
         
         if not file_content:

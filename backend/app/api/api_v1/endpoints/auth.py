@@ -295,6 +295,35 @@ async def refresh_token(
             )
 
         # 创建响应
+        # 处理created_at和updated_at，如果为None则使用当前时间
+        # 如果返回的是字符串，需要转换为datetime对象
+        created_at = full_user.get('created_at')
+        updated_at = full_user.get('updated_at')
+        
+        # 处理created_at
+        if created_at is None:
+            created_at = datetime.utcnow()
+        elif isinstance(created_at, str):
+            try:
+                # 尝试解析ISO格式字符串
+                created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                created_at = datetime.utcnow()
+        elif not isinstance(created_at, datetime):
+            created_at = datetime.utcnow()
+        
+        # 处理updated_at
+        if updated_at is None:
+            updated_at = datetime.utcnow()
+        elif isinstance(updated_at, str):
+            try:
+                # 尝试解析ISO格式字符串
+                updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                updated_at = datetime.utcnow()
+        elif not isinstance(updated_at, datetime):
+            updated_at = datetime.utcnow()
+        
         token_response = TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -313,12 +342,13 @@ async def refresh_token(
                 "is_active": full_user.get('is_active', True),
                 "is_verified": full_user.get('email_confirmed', False),
                 "is_superuser": full_user.get('is_superuser', False),
-                "created_at": full_user.get('created_at'),
-                "updated_at": full_user.get('updated_at')
+                "created_at": created_at,
+                "updated_at": updated_at
             }
         )
 
         logger.info(f"令牌刷新成功: {full_user.get('username', full_user.get('email'))}")
+        
         return token_response
 
     except HTTPException:

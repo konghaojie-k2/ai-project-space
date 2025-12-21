@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings
 
 class LangGraphConfig(BaseSettings):
     """LangGraph配置"""
-    enabled: bool = False
+    enabled: bool = True  # 默认启用LangGraph Agent
     fallback_enabled: bool = True
     confidence_threshold: float = 0.5
     max_execution_time: int = 60  # 最大执行时间（秒）

@@ -1,12 +1,10 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { 
   MagnifyingGlassIcon, 
   FunnelIcon, 
-  Squares2X2Icon, 
-  ListBulletIcon,
-  CloudArrowUpIcon,
   DocumentIcon,
   PhotoIcon,
   VideoCameraIcon,
@@ -20,12 +18,12 @@ import {
   DocumentTextIcon,
   TableCellsIcon,
   PresentationChartBarIcon,
-  UserIcon
+  UserIcon,
+  CodeBracketIcon
 } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
-import { FileUpload } from '@/components/features/FileUpload'
 import { FilePreview } from '@/components/features/FilePreview'
 import TagManager from '@/components/features/TagManager'
 import DashboardPageHeader from '@/components/layout/DashboardPageHeader'
@@ -44,59 +42,180 @@ interface FileItem {
   tags: string[]
   url?: string
   thumbnail?: string
+  projectId?: string
+  projectName?: string
 }
 
-// 模拟数据
-const mockFiles: FileItem[] = [
-  {
-    id: '1',
-    name: '项目需求文档.pdf',
-    type: 'application/pdf',
-    size: 2048000,
-    uploadedAt: '2024-12-28T10:30:00Z',
-    uploadedBy: '张三',
-    stage: '售前',
-    tags: ['需求', '重要']
-  },
-  {
-    id: '2',
-    name: '用户调研报告.docx',
-    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    size: 1536000,
-    uploadedAt: '2024-12-27T14:20:00Z',
-    uploadedBy: '李四',
-    stage: '业务调研',
-    tags: ['调研', '用户']
-  },
-  {
-    id: '3',
-    name: '数据分析图表.png',
-    type: 'image/png',
-    size: 512000,
-    uploadedAt: '2024-12-26T09:15:00Z',
-    uploadedBy: '王五',
-    stage: '数据理解',
-    tags: ['图表', '分析']
+// 获取项目信息缓存
+const projectCache: Map<string, string> = new Map();
+
+// 获取项目名称
+const fetchProjectName = async (projectId: string | null | undefined): Promise<string | null> => {
+  if (!projectId) {
+    return null;
   }
-]
+  
+  // 检查缓存
+  if (projectCache.has(projectId)) {
+    return projectCache.get(projectId) || null;
+  }
+  
+  try {
+    const { apiGet } = await import('@/lib/api');
+    const response = await apiGet(`/api/v1/projects/${projectId}`);
+    if (response.ok) {
+      const project = await response.json();
+      const projectName = project.name || '未知项目';
+      projectCache.set(projectId, projectName);
+      return projectName;
+    } else if (response.status === 403) {
+      // 403表示无权限访问，缓存为"无权限访问"而不是null
+      const noAccessText = '无权限访问';
+      projectCache.set(projectId, noAccessText);
+      return noAccessText;
+    } else if (response.status === 404) {
+      // 404表示项目不存在
+      const notFoundText = '项目不存在';
+      projectCache.set(projectId, notFoundText);
+      return notFoundText;
+    }
+  } catch (error) {
+    console.error(`获取项目信息失败 (${projectId}):`, error);
+  }
+  
+  // 如果获取失败，返回null，在显示时会显示"未知项目"
+  return null;
+};
+
+// 从后端API获取所有文件列表
+const fetchAllFiles = async (): Promise<FileItem[]> => {
+  try {
+    const { apiGet } = await import('@/lib/api');
+    const response = await apiGet('/api/v1/files/');
+    if (response.ok) {
+      const files = await response.json();
+      
+      // 收集所有唯一的项目ID
+      const projectIds = new Set<string>();
+      files.forEach((file: any) => {
+        if (file.project_id) {
+          projectIds.add(file.project_id);
+        }
+      });
+      
+      // 批量获取项目名称
+      const projectNamePromises = Array.from(projectIds).map(async (projectId) => {
+        const name = await fetchProjectName(projectId);
+        return { projectId, name };
+      });
+      const projectNames = await Promise.all(projectNamePromises);
+      const projectNameMap = new Map<string, string>();
+      projectNames.forEach(({ projectId, name }) => {
+        if (name) {
+          projectNameMap.set(projectId, name);
+        }
+      });
+      
+      return files.map((file: any) => ({
+        id: file.id,
+        name: file.original_name,
+        type: file.file_type,
+        size: file.file_size,
+        uploadedAt: file.created_at,
+        uploadedBy: file.uploaded_by || '未知用户',
+        stage: file.stage || '待分类',
+        tags: file.tags || [],
+        url: `/api/v1/files/${file.id}/download`,
+        projectId: file.project_id || null,
+        projectName: file.project_id ? (projectNameMap.get(file.project_id) || '未知项目') : null
+      }));
+    } else {
+      console.error('获取文件列表失败:', response.statusText);
+      return [];
+    }
+  } catch (error) {
+    console.error('获取文件列表出错:', error);
+    return [];
+  }
+};
+
+// 获取所有标签（预定义 + 自定义）
+const getAllTags = () => {
+  let customTags: any[] = [];
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('custom-tags');
+      if (stored) {
+        customTags = JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('加载自定义标签失败:', error);
+    }
+  }
+  return [...PREDEFINED_TAGS, ...customTags];
+};
+
+// 根据tag ID获取tag信息
+const getTagInfo = (tagId: string) => {
+  const allTags = getAllTags();
+  return allTags.find(tag => tag.id === tagId);
+};
 
 const stages = ['全部', ...PROJECT_STAGES.map(stage => stage.name)]
 const fileTypes = ['全部', 'PDF', 'Word', 'Excel', '图片', '视频', '音频', '其他']
 
 export default function FilesPage() {
-  const [files, setFiles] = useState<FileItem[]>(mockFiles)
-  const [filteredFiles, setFilteredFiles] = useState<FileItem[]>(mockFiles)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [files, setFiles] = useState<FileItem[]>([])
+  const [filteredFiles, setFilteredFiles] = useState<FileItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStage, setSelectedStage] = useState('全部')
   const [selectedType, setSelectedType] = useState('全部')
-  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [selectedProject, setSelectedProject] = useState<string>('全部')
   const [showPreviewModal, setShowPreviewModal] = useState(false)
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [showTagManager, setShowTagManager] = useState(false)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [fileToTag, setFileToTag] = useState<FileItem | null>(null)
+  const [projects, setProjects] = useState<Array<{id: string, name: string}>>([]);
+
+  // 加载文件数据
+  useEffect(() => {
+    const loadFiles = async () => {
+      setIsLoading(true);
+      try {
+        const apiFiles = await fetchAllFiles();
+        setFiles(apiFiles);
+        setFilteredFiles(apiFiles);
+      } catch (error) {
+        console.error('加载文件失败:', error);
+        setFiles([]);
+        setFilteredFiles([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadFiles();
+  }, []);
+
+  // 加载项目列表（用于筛选）
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        const { apiGet } = await import('@/lib/api');
+        const response = await apiGet('/api/v1/projects/');
+        if (response.ok) {
+          const projectList = await response.json();
+          setProjects(projectList.map((p: any) => ({ id: p.id, name: p.name })));
+        }
+      } catch (error) {
+        console.error('加载项目列表失败:', error);
+      }
+    };
+    loadProjects();
+  }, []);
 
   // 过滤文件
   useEffect(() => {
@@ -106,8 +225,17 @@ export default function FilesPage() {
     if (searchQuery) {
       filtered = filtered.filter(file => 
         file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        file.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+        (file.projectName && file.projectName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        file.tags.some(tag => {
+          const tagInfo = getTagInfo(tag);
+          return tagInfo && tagInfo.name.toLowerCase().includes(searchQuery.toLowerCase());
+        })
       )
+    }
+
+    // 项目过滤
+    if (selectedProject !== '全部') {
+      filtered = filtered.filter(file => file.projectId === selectedProject)
     }
 
     // 阶段过滤
@@ -138,11 +266,20 @@ export default function FilesPage() {
     }
 
     setFilteredFiles(filtered)
-  }, [files, searchQuery, selectedStage, selectedType])
+  }, [files, searchQuery, selectedStage, selectedType, selectedProject])
 
   // 改进的文件图标函数，使用更直观的图标
-  const getFileIcon = (type: string) => {
-    if (type.startsWith('image/')) {
+  const getFileIcon = (type: string, fileName: string) => {
+    // 先检查文件扩展名以支持Markdown
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    if (extension === 'md' || extension === 'markdown') {
+      return (
+        <div className="h-8 w-8 bg-purple-600 rounded flex items-center justify-center">
+          <CodeBracketIcon className="h-5 w-5 text-white" />
+        </div>
+      )
+    } else if (type.startsWith('image/')) {
       return <PhotoIcon className="h-8 w-8 text-blue-500" />
     } else if (type === 'application/pdf') {
       return (
@@ -204,22 +341,6 @@ export default function FilesPage() {
     })
   }
 
-  const handleFileUpload = (uploadedFiles: File[]) => {
-    const newFiles: FileItem[] = uploadedFiles.map(file => ({
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: '当前用户',
-      stage: '售前',
-      tags: [],
-      url: URL.createObjectURL(file)
-    }))
-    
-    setFiles(prev => [...newFiles, ...prev])
-    setShowUploadModal(false)
-  }
 
   const handlePreview = (file: FileItem) => {
     setSelectedFile(file)
@@ -229,17 +350,10 @@ export default function FilesPage() {
   // 添加下载功能
   const handleDownload = (file: FileItem) => {
     if (file.url) {
-      // 如果有URL，直接下载
-      const link = document.createElement('a')
-      link.href = file.url
-      link.download = file.name
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
+      // 使用后端API下载文件
+      window.open(file.url, '_blank');
     } else {
-      // 模拟下载
-      console.log('下载文件:', file.name)
-      // 这里应该调用后端API下载文件
+      console.error('文件下载URL不存在:', file.name);
     }
   }
 
@@ -262,9 +376,24 @@ export default function FilesPage() {
     // 这里应该集成在线编辑器或调用外部编辑器
   }
 
-  const handleDelete = (fileId: string) => {
+  const handleDelete = async (fileId: string) => {
     if (confirm('确定要删除这个文件吗？')) {
-      setFiles(prev => prev.filter(f => f.id !== fileId))
+      try {
+        const { apiDelete } = await import('@/lib/api');
+        const response = await apiDelete(`/api/v1/files/${fileId}`);
+        if (response.ok) {
+          // 删除成功后重新加载文件列表
+          const apiFiles = await fetchAllFiles();
+          setFiles(apiFiles);
+          setFilteredFiles(apiFiles);
+        } else {
+          const errorData = await response.json();
+          alert(`删除失败: ${errorData.detail || errorData.message || response.statusText}`);
+        }
+      } catch (error) {
+        console.error('删除文件失败:', error);
+        alert('删除文件失败，请稍后重试');
+      }
     }
   }
 
@@ -274,17 +403,34 @@ export default function FilesPage() {
     setShowTagManager(true)
   }
 
-  const handleTagsUpdate = (tags: string[]) => {
-    if (fileToTag) {
-      setFiles(prev => prev.map(f => 
-        f.id === fileToTag.id 
-          ? { ...f, tags }
-          : f
-      ))
+  const handleTagsUpdate = async (tags: string[]) => {
+    if (!fileToTag) {
+      return;
     }
-    setShowTagManager(false)
-    setFileToTag(null)
-    setSelectedTags([])
+
+    try {
+      const { apiPut } = await import('@/lib/api');
+      const response = await apiPut(`/api/v1/files/${fileToTag.id}`, {
+        tags: tags
+      });
+
+      if (response.ok) {
+        // 更新成功后重新加载文件列表
+        const apiFiles = await fetchAllFiles();
+        setFiles(apiFiles);
+        setFilteredFiles(apiFiles);
+      } else {
+        const errorData = await response.json();
+        alert(`标签更新失败: ${errorData.detail || errorData.message || response.statusText}`);
+      }
+    } catch (error) {
+      console.error('标签更新失败:', error);
+      alert('标签更新失败，请稍后重试');
+    }
+    
+    setShowTagManager(false);
+    setFileToTag(null);
+    setSelectedTags([]);
   }
 
   return (
@@ -293,18 +439,12 @@ export default function FilesPage() {
       <DashboardPageHeader
         title="文件管理"
         description="管理项目文件，支持多种格式预览和组织"
-        actions={
-          <Button onClick={() => setShowUploadModal(true)}>
-            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
-            上传文件
-          </Button>
-        }
+        showBackButton={false}
       />
 
       <div className="space-y-6 p-6">
-
-      {/* 工具栏 */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+        {/* 工具栏 */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
         {/* 搜索和筛选 */}
         <div className="flex items-center space-x-4">
           <div className="relative">
@@ -327,37 +467,27 @@ export default function FilesPage() {
           </Button>
         </div>
 
-        {/* 视图切换 */}
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => setViewMode('grid')}
-            className={cn(
-              'p-2 rounded-md',
-              viewMode === 'grid'
-                ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400'
-                : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-            )}
-          >
-            <Squares2X2Icon className="h-5 w-5" />
-          </button>
-          <button
-            onClick={() => setViewMode('list')}
-            className={cn(
-              'p-2 rounded-md',
-              viewMode === 'list'
-                ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400'
-                : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-            )}
-          >
-            <ListBulletIcon className="h-5 w-5" />
-          </button>
-        </div>
       </div>
 
       {/* 筛选器 */}
       {showFilters && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                项目
+              </label>
+              <select
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value)}
+                className="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              >
+                <option value="全部">全部</option>
+                {projects.map(project => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 项目阶段
@@ -401,12 +531,13 @@ export default function FilesPage() {
               总大小 {formatFileSize(filteredFiles.reduce((sum, file) => sum + file.size, 0))}
             </span>
           </div>
-          {(searchQuery || selectedStage !== '全部' || selectedType !== '全部') && (
+          {(searchQuery || selectedProject !== '全部' || selectedStage !== '全部' || selectedType !== '全部') && (
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
                 setSearchQuery('')
+                setSelectedProject('全部')
                 setSelectedStage('全部')
                 setSelectedType('全部')
               }}
@@ -417,108 +548,17 @@ export default function FilesPage() {
         </div>
       </div>
 
-      {/* 文件网格视图 */}
-      {viewMode === 'grid' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredFiles.map((file) => (
-            <div
-              key={file.id}
-              className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-200 group"
-            >
-              {/* 文件预览 */}
-              <div className="relative aspect-[4/3] bg-gray-50 dark:bg-gray-700 rounded-t-lg overflow-hidden">
-                <div className="flex items-center justify-center h-full">
-                  {getFileIcon(file.type)}
-                </div>
-                
-                {/* 操作按钮 */}
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="flex space-x-1">
-                    <button
-                      onClick={() => handlePreview(file)}
-                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
-                      title="预览"
-                    >
-                      <EyeIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                    </button>
-                    <button 
-                      onClick={() => handleDownload(file)}
-                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
-                      title="下载"
-                    >
-                      <ArrowDownTrayIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                    </button>
-                    <button 
-                      onClick={() => handleEdit(file)}
-                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
-                      title="编辑"
-                    >
-                      <PencilIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                    </button>
-                    <button 
-                      onClick={() => handleTagFile(file)}
-                      className="p-1.5 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow-md transition-shadow"
-                      title="标签"
-                    >
-                      <TagIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* 文件信息 */}
-              <div className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate flex-1">
-                    {file.name}
-                  </h3>
-                </div>
-                
-                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-2">
-                  <span>{formatFileSize(file.size)}</span>
-                  <span>{formatDate(file.uploadedAt)}</span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <span className={cn(
-                    'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium',
-                    getStageColorClass(file.stage)
-                  )}>
-                    {file.stage}
-                  </span>
-                  
-                  {/* 上传者信息 - 移到右侧 */}
-                  <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
-                    <UserIcon className="h-3 w-3 mr-1" />
-                    <span>{file.uploadedBy}</span>
-                  </div>
-                </div>
-                
-                {/* 标签信息 */}
-                {file.tags.length > 0 && (
-                  <div className="flex items-center space-x-1 mt-2">
-                    <TagIcon className="h-3 w-3 text-gray-400" />
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {file.tags[0]}
-                      {file.tags.length > 1 && ` +${file.tags.length - 1}`}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* 文件列表视图 */}
-      {viewMode === 'list' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     文件名
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    项目
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     大小
@@ -543,26 +583,60 @@ export default function FilesPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 mr-3">
-                          {getFileIcon(file.type)}
+                          {getFileIcon(file.type, file.name)}
                         </div>
                         <div>
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
                             {file.name}
                           </div>
-                          {file.tags.length > 0 && (
-                            <div className="flex items-center space-x-1 mt-1">
-                              {file.tags.map((tag, index) => (
-                                <span
-                                  key={index}
-                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          {file.tags.length > 0 && (() => {
+                            // 过滤掉不存在的tag（已删除的自定义tag或无效tag）
+                            const validTags = file.tags.filter(tagId => getTagInfo(tagId) !== undefined);
+                            if (validTags.length === 0) return null;
+                            
+                            return (
+                              <div className="flex items-center flex-wrap gap-1 mt-1">
+                                {validTags.slice(0, 2).map((tagId) => {
+                                  const tagInfo = getTagInfo(tagId);
+                                  if (!tagInfo) return null; // 双重检查
+                                  return (
+                                    <span
+                                      key={tagId}
+                                      className={`px-1.5 py-0.5 rounded text-xs font-medium ${tagInfo.color} border border-opacity-20`}
+                                      title={tagInfo.name}
+                                    >
+                                      {tagInfo.name}
+                                    </span>
+                                  );
+                                })}
+                                {validTags.length > 2 && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
+                                    +{validTags.length - 2}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {file.projectId ? (
+                        file.projectName === '无权限访问' || file.projectName === '项目不存在' ? (
+                          <span className="text-sm text-gray-500 dark:text-gray-400" title="无法访问该项目">
+                            {file.projectName}
+                          </span>
+                        ) : (
+                          <Link 
+                            href={`/dashboard/projects/${file.projectId}`}
+                            className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                          >
+                            {file.projectName || '未知项目'}
+                          </Link>
+                        )
+                      ) : (
+                        <span className="text-sm text-gray-400 dark:text-gray-500">未分配</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                       {formatFileSize(file.size)}
@@ -626,45 +700,33 @@ export default function FilesPage() {
             </table>
           </div>
         </div>
+
+      {/* 加载状态 */}
+      {isLoading && (
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-500 dark:text-gray-400">加载文件中...</p>
+        </div>
       )}
 
       {/* 空状态 */}
-      {filteredFiles.length === 0 && (
+      {!isLoading && filteredFiles.length === 0 && (
         <div className="text-center py-12">
           <DocumentIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            {searchQuery || selectedStage !== '全部' || selectedType !== '全部' 
+            {searchQuery || selectedProject !== '全部' || selectedStage !== '全部' || selectedType !== '全部' 
               ? '没有找到匹配的文件' 
               : '暂无文件'
             }
           </h3>
           <p className="text-gray-500 dark:text-gray-400 mb-4">
-            {searchQuery || selectedStage !== '全部' || selectedType !== '全部' 
+            {searchQuery || selectedProject !== '全部' || selectedStage !== '全部' || selectedType !== '全部' 
               ? '尝试调整筛选条件或搜索关键词' 
-              : '开始上传您的第一个文件'
+              : '文件需要在项目管理页面中上传'
             }
           </p>
-          <Button onClick={() => setShowUploadModal(true)}>
-            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
-            上传文件
-          </Button>
         </div>
       )}
-
-      {/* 上传模态框 */}
-      <Modal
-        isOpen={showUploadModal}
-        onClose={() => setShowUploadModal(false)}
-        title="上传文件"
-        size="lg"
-      >
-        <FileUpload
-          onUpload={handleFileUpload}
-          multiple={true}
-          maxFiles={10}
-          maxSize={50 * 1024 * 1024} // 50MB
-        />
-      </Modal>
 
       {/* 预览模态框 */}
       <Modal

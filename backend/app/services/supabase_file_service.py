@@ -8,13 +8,16 @@ Supabase文件存储服务
 
 import uuid
 import asyncio
+import json
+import time
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from loguru import logger
 from collections import OrderedDict
 
-from app.services.supabase_client import supabase_service, direct_supabase_query
+from app.services.supabase_client import supabase_service, direct_supabase_query, direct_supabase_update, run_supabase_query
 from app.core.config import settings
+
 
 def is_valid_uuid(uuid_string: str) -> bool:
     """
@@ -292,7 +295,8 @@ class SupabaseFileService:
     async def download_file(
         self,
         file_id: str,
-        user_id: str
+        user_id: str,
+        file_info: Optional[Dict[str, Any]] = None
     ) -> Optional[bytes]:
         """
         从Supabase Storage下载文件
@@ -300,6 +304,7 @@ class SupabaseFileService:
         Args:
             file_id: 文件ID
             user_id: 用户ID（用于权限检查）
+            file_info: 文件信息（可选，如果提供则避免重复查询）
 
         Returns:
             文件二进制内容，失败返回None
@@ -308,23 +313,67 @@ class SupabaseFileService:
             return None
 
         try:
-            # 获取文件记录
-            file_info = await self.get_file_info(file_id)
+            # 如果未提供file_info，则查询
+            if file_info is None:
+                file_info = await self.get_file_info(file_id)
+            
             if not file_info:
                 return None
 
-            # 检查权限
-            if not await self._check_file_access(file_id, user_id):
+            # 检查权限（传递file_info避免重复查询）
+            if not await self._check_file_access(file_id, user_id, file_info=file_info):
                 logger.warning(f"用户 {user_id} 无权限下载文件 {file_id}")
                 return None
 
-            # 从Storage下载（优先使用admin_client）
+            # 从Storage下载（使用直接HTTP方式，性能更好）
             storage_path = file_info.get("file_path") or file_info.get("stored_name")
-            storage_client = self.service.admin_client if self.service.admin_client_available else self.service.client
-            if not storage_client:
-                logger.error("❌ Supabase客户端未初始化，无法下载文件")
-                return None
-            response = storage_client.storage.from_(self.bucket_name).download(storage_path)
+            
+            # 使用直接HTTP方式下载Storage文件，绕过SDK
+            try:
+                from app.services.supabase_client import get_global_async_http_client
+                import urllib.parse
+                
+                client = await get_global_async_http_client()
+                base_url = settings.SUPABASE_URL.rstrip('/')
+                # Storage API路径格式: /storage/v1/object/{bucket}/{path}
+                encoded_path = urllib.parse.quote(storage_path, safe='')
+                url = f"{base_url}/storage/v1/object/{self.bucket_name}/{encoded_path}"
+                
+                # 使用Service Key进行认证
+                api_key = settings.SUPABASE_SERVICE_KEY
+                headers = {
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {api_key}"
+                }
+                
+                http_response = await client.get(url, headers=headers)
+                
+                if http_response.status_code == 200:
+                    response = http_response.content
+                else:
+                    logger.error(f"Storage下载失败: HTTP {http_response.status_code} - {http_response.text}")
+                    # 回退到SDK方式
+                    storage_client = self.service.admin_client if self.service.admin_client_available else self.service.client
+                    if not storage_client:
+                        logger.error("❌ Supabase客户端未初始化，无法下载文件")
+                        return None
+                    loop = asyncio.get_event_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: storage_client.storage.from_(self.bucket_name).download(storage_path)
+                    )
+            except Exception as http_error:
+                logger.warning(f"直接HTTP下载失败，回退到SDK方式: {http_error}")
+                # 回退到SDK方式
+                storage_client = self.service.admin_client if self.service.admin_client_available else self.service.client
+                if not storage_client:
+                    logger.error("❌ Supabase客户端未初始化，无法下载文件")
+                    return None
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: storage_client.storage.from_(self.bucket_name).download(storage_path)
+                )
 
             if response:
                 logger.info(f"文件下载成功: {file_id}")
@@ -338,7 +387,7 @@ class SupabaseFileService:
 
     async def get_file_info(self, file_id: str) -> Optional[Dict[str, Any]]:
         """
-        获取文件信息
+        获取文件信息（使用直接HTTP查询优化性能）
 
         Args:
             file_id: 文件ID
@@ -350,13 +399,17 @@ class SupabaseFileService:
             return None
 
         try:
-            # 使用线程池执行同步查询
-            response = await run_supabase_query(
-                lambda: self.service.client.table('files').select('*').eq('id', file_id).single().execute()
+            # 使用直接HTTP查询，性能更好
+            results = await direct_supabase_query(
+                table="files",
+                select="*",
+                filters={"id": file_id},
+                limit=1,
+                use_service_key=True
             )
 
-            if response.data:
-                return response.data
+            if results and len(results) > 0:
+                return results[0]
             return None
 
         except Exception as e:
@@ -725,19 +778,23 @@ class SupabaseFileService:
             logger.error(f"更新文件元数据失败: {e}")
             return False
 
-    async def _check_file_access(self, file_id: str, user_id: str) -> bool:
+    async def _check_file_access(self, file_id: str, user_id: str, file_info: Optional[Dict[str, Any]] = None) -> bool:
         """
         检查用户是否有权限访问文件
 
         Args:
             file_id: 文件ID
             user_id: 用户ID
+            file_info: 文件信息（可选，如果提供则避免重复查询）
 
         Returns:
             有权限返回True
         """
         try:
-            file_info = await self.get_file_info(file_id)
+            # 如果未提供file_info，则查询
+            if file_info is None:
+                file_info = await self.get_file_info(file_id)
+            
             if not file_info:
                 return False
 
@@ -790,7 +847,7 @@ class SupabaseFileService:
         }
         return content_types.get(extension, 'application/octet-stream')
 
-    async def user_can_access_file(self, file_id: str, user_id: str, is_admin: bool = False) -> bool:
+    async def user_can_access_file(self, file_id: str, user_id: str, is_admin: bool = False, file_info: Optional[Dict[str, Any]] = None) -> bool:
         """
         检查用户是否有权限访问文件（公开方法）
 
@@ -798,11 +855,12 @@ class SupabaseFileService:
             file_id: 文件ID
             user_id: 用户ID
             is_admin: 是否为管理员
+            file_info: 文件信息（可选，如果提供则避免重复查询）
 
         Returns:
             有权限返回True
         """
-        return await self._check_file_access(file_id, user_id)
+        return await self._check_file_access(file_id, user_id, file_info=file_info)
 
     async def get_files(
         self,
@@ -901,12 +959,15 @@ class SupabaseFileService:
         try:
             # 获取文件信息
             file_info = await self.get_file_info(file_id)
+            
             if not file_info:
                 return None
 
             # 检查权限
-            if file_info.get('uploaded_by') != user_id:
-                logger.warning(f"用户 {user_id} 无权限更新文件 {file_id}")
+            uploaded_by = file_info.get('uploaded_by')
+            
+            if str(uploaded_by) != str(user_id):
+                logger.warning(f"用户 {user_id} 无权限更新文件 {file_id} (uploaded_by: {uploaded_by})")
                 return None
 
             # 构建更新数据
@@ -921,34 +982,156 @@ class SupabaseFileService:
                 # stage字段可能不存在，先尝试更新，如果失败则忽略
                 optional_fields['stage'] = file_update['stage']
             if 'tags' in file_update:
-                update_data['tags'] = file_update['tags']
+                # tags字段必须存在，确保正确处理
+                tags_value = file_update['tags']
+                if tags_value is not None:
+                    # 确保tags是列表格式
+                    if isinstance(tags_value, list):
+                        update_data['tags'] = tags_value
+                    else:
+                        # 如果不是列表，尝试转换
+                        update_data['tags'] = [tags_value] if tags_value else []
+                else:
+                    # tags为None时，设置为空数组
+                    update_data['tags'] = []
             if 'is_public' in file_update:
                 update_data['is_public'] = file_update['is_public']
 
             if not update_data and not optional_fields:
                 return file_info
 
-            # 先尝试更新所有字段（包括可选字段）
+            # 先尝试更新必需字段（不包括可选字段，因为可选字段可能不存在）
+            # 如果只有必需字段，直接更新
+            if update_data and not optional_fields:
+                try:
+                    # 使用直接HTTP方式更新，性能更好
+                    response_data = await direct_supabase_update(
+                        table="files",
+                        update_data=update_data,
+                        filters={"id": file_id},
+                        use_service_key=True
+                    )
+                    
+                    if response_data and len(response_data) > 0:
+                        return response_data[0]
+                    else:
+                        # 更新成功但返回空数据，重新查询文件信息以确保返回最新数据
+                        logger.debug(f"数据库更新成功但返回空数据，重新查询文件信息: {file_id}")
+                        # 重新查询文件信息（使用已优化的direct_supabase_query）
+                        updated_file_info = await self.get_file_info(file_id)
+                        if updated_file_info:
+                            return updated_file_info
+                        else:
+                            logger.warning(f"重新查询文件信息失败，返回原文件信息: {file_id}")
+                            return file_info
+                except Exception as update_error:
+                    error_str = str(update_error)
+                    logger.error(f"直接HTTP更新失败: {error_str}")
+                    # 如果直接HTTP更新失败，回退到SDK方式
+                    logger.debug(f"回退到SDK方式更新: {file_id}")
+                    try:
+                        response = await run_supabase_query(
+                            lambda: self.service.client.table('files').update(update_data).eq('id', file_id).execute()
+                        )
+                        if response.data and len(response.data) > 0:
+                            return response.data[0]
+                        else:
+                            # SDK方式也返回空数据，重新查询
+                            updated_file_info = await self.get_file_info(file_id)
+                            return updated_file_info if updated_file_info else file_info
+                    except Exception as sdk_error:
+                        logger.error(f"SDK方式更新也失败: {sdk_error}")
+                        return None
+            
+            # 如果有可选字段，先尝试更新所有字段（包括可选字段）
+            # 但如果可选字段导致错误，会回退到只更新必需字段
             all_update_data = {**update_data, **optional_fields}
             try:
-                response = await run_supabase_query(
-                    lambda: self.service.client.table('files').update(all_update_data).eq('id', file_id).execute()
+                # 使用直接HTTP方式更新，性能更好
+                response_data = await direct_supabase_update(
+                    table="files",
+                    update_data=all_update_data,
+                    filters={"id": file_id},
+                    use_service_key=True
                 )
-                if response.data:
-                    return response.data[0]
+                
+                if response_data and len(response_data) > 0:
+                    return response_data[0]
+                else:
+                    # 更新成功但返回空数据，重新查询文件信息以确保返回最新数据
+                    logger.debug(f"数据库更新成功但返回空数据，重新查询文件信息: {file_id}")
+                    # 重新查询文件信息（使用已优化的direct_supabase_query）
+                    updated_file_info = await self.get_file_info(file_id)
+                    if updated_file_info:
+                        return updated_file_info
+                    else:
+                        logger.warning(f"重新查询文件信息失败，返回原文件信息: {file_id}")
+                        return file_info
+            except ValueError as field_error:
+                # 字段不存在的错误，回退到只更新必需字段
+                error_str = str(field_error)
+                
+                # 如果是因为可选字段不存在导致的错误，尝试只更新必需字段
+                if optional_fields and update_data:
+                    logger.debug(f"可选字段不存在，尝试只更新必需字段: {file_id}")
+                    try:
+                        # 使用直接HTTP方式更新必需字段，性能更好
+                        response_data = await direct_supabase_update(
+                            table="files",
+                            update_data=update_data,
+                            filters={"id": file_id},
+                            use_service_key=True
+                        )
+                        
+                        if response_data and len(response_data) > 0:
+                            logger.debug(f"必需字段更新成功，跳过了可选字段: {file_id}")
+                            return response_data[0]
+                        else:
+                            # 更新成功但返回空数据，重新查询文件信息
+                            logger.debug(f"必需字段更新成功但返回空数据，重新查询文件信息: {file_id}")
+                            # 重新查询文件信息（使用已优化的direct_supabase_query）
+                            updated_file_info = await self.get_file_info(file_id)
+                            if updated_file_info:
+                                return updated_file_info
+                            else:
+                                logger.error(f"重新查询文件信息失败: {file_id}")
+                                return None
+                    except Exception as required_error:
+                        logger.error(f"更新必需字段也失败: {required_error}")
+                        return None
+                else:
+                    # 只有可选字段，字段不存在不算错误
+                    logger.debug(f"只有可选字段需要更新，但字段不存在，返回原文件信息: {file_id}")
+                    return file_info
             except Exception as optional_error:
                 error_str = str(optional_error)
+                
                 # 如果是因为可选字段不存在导致的错误，尝试只更新必需字段
-                if optional_fields and ("not find" in error_str.lower() or "PGRST204" in error_str):
+                if optional_fields and ("not find" in error_str.lower() or "PGRST204" in error_str or "column" in error_str.lower()):
                     logger.debug(f"某些可选字段不存在，尝试只更新必需字段: {file_id}")
                     if update_data:
                         try:
-                            response = await run_supabase_query(
-                                lambda: self.service.client.table('files').update(update_data).eq('id', file_id).execute()
+                            # 使用直接HTTP方式更新必需字段，性能更好
+                            response_data = await direct_supabase_update(
+                                table="files",
+                                update_data=update_data,
+                                filters={"id": file_id},
+                                use_service_key=True
                             )
-                            if response.data:
+                            
+                            if response_data and len(response_data) > 0:
                                 logger.debug(f"必需字段更新成功，跳过了可选字段: {file_id}")
-                                return response.data[0]
+                                return response_data[0]
+                            else:
+                                # 更新成功但返回空数据，重新查询文件信息
+                                logger.debug(f"必需字段更新成功但返回空数据，重新查询文件信息: {file_id}")
+                                # 重新查询文件信息（使用已优化的direct_supabase_query）
+                                updated_file_info = await self.get_file_info(file_id)
+                                if updated_file_info:
+                                    return updated_file_info
+                                else:
+                                    logger.error(f"重新查询文件信息失败: {file_id}")
+                                    return None
                         except Exception as required_error:
                             logger.error(f"更新必需字段也失败: {required_error}")
                             return None
@@ -958,6 +1141,7 @@ class SupabaseFileService:
                         return file_info
                 else:
                     # 其他错误，重新抛出
+                    logger.error(f"数据库更新失败（非字段不存在错误）: {error_str}")
                     raise
             
             return None
@@ -1006,12 +1190,13 @@ class SupabaseFileService:
                 logger.warning(f"更新查看次数失败: {e}")
                 return False
 
-    async def increment_download_count(self, file_id: str) -> bool:
+    async def increment_download_count(self, file_id: str, file_info: Optional[Dict[str, Any]] = None) -> bool:
         """
         增加下载次数
 
         Args:
             file_id: 文件ID
+            file_info: 文件信息（可选，如果提供则避免重复查询）
 
         Returns:
             更新成功返回True（如果字段不存在，返回True但不报错）
@@ -1020,10 +1205,11 @@ class SupabaseFileService:
             return False
 
         try:
-            # 获取当前下载次数
-            file_info = await self.get_file_info(file_id)
-            if not file_info:
-                return False
+            # 如果未提供file_info，则查询
+            if file_info is None:
+                file_info = await self.get_file_info(file_id)
+                if not file_info:
+                    return False
 
             current_count = file_info.get('download_count', 0)
             

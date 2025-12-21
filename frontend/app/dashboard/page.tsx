@@ -439,8 +439,8 @@ export default function DashboardPage() {
                 <div className="flex items-start space-x-4">
                   <CheckCircleIcon className="h-6 w-6 text-green-500 mt-1 flex-shrink-0" />
                   <div>
-                    <h3 className="text-base font-medium text-secondary-900 mb-2">数据分析</h3>
-                    <p className="text-sm text-secondary-600">项目进度统计，使用数据分析</p>
+                    <h3 className="text-base font-medium text-secondary-900 mb-2">智能文档</h3>
+                    <p className="text-sm text-secondary-600">项目进度统计，使用智能文档</p>
                   </div>
                 </div>
               </div>

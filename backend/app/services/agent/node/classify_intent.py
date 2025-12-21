@@ -96,12 +96,16 @@ def classify_intent_node(state: AgentState) -> Dict[str, Any]:
         confidence = float(classification.get("confidence", 0.5))
         clarity = classification.get("clarity", "unclear")
 
-        # 判断是否需要澄清（基于置信度和清晰度）
+        # 判断是否需要澄清（基于置信度、清晰度和歧义）
+        # 只有当查询不清晰（clarity == "unclear"）或者有歧义（ambiguities）时才需要澄清
+        # 如果查询清晰（clarity == "clear"）且无歧义，即使有 clarifying_questions 也不触发澄清
+        ambiguities = classification.get("ambiguities", [])
+        has_ambiguities = bool(ambiguities and len(ambiguities) > 0)
+        
         needs_clarification = (
-            confidence < 0.7 or
-            clarity == "unclear" or
-            classification.get("ambiguities") or
-            classification.get("clarifying_questions")
+            clarity == "unclear" or  # 查询不清晰
+            has_ambiguities or  # 有歧义
+            (confidence < 0.7 and clarity != "clear")  # 置信度低且不是明确清晰
         )
 
         logger.info(f"  意图: {intent}")

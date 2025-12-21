@@ -20,9 +20,8 @@ from ...tools.project_info_tool import (
     get_project_members_tool
 )
 
-from ...middleware.clarification import ClarificationMiddleware
 
-def agent_executor_node(state: AgentState) -> Dict[str, Any]:
+async def agent_executor_node(state: AgentState) -> Dict[str, Any]:
     """
     Agent执行节点：使用create_agent创建智能Agent
 
@@ -91,23 +90,20 @@ def agent_executor_node(state: AgentState) -> Dict[str, Any]:
 请基于用户的问题和可用工具，提供准确、有用的回答。
 """
 
-        # 🔴 关键：使用create_agent创建智能Agent
+        # 使用create_agent创建智能Agent
         agent = create_agent(
             model=llm,
             tools=tools,
             system_prompt=system_prompt,
-            middleware=[
-            ClarificationMiddleware(confidence_threshold=0.7),
-        ],
-        checkpointer=InMemorySaver(),
+            checkpointer=InMemorySaver(),
         )
 
         # 构建用户消息
         user_message = f"用户查询：{query}"
 
-        # 调用Agent处理
+        # 调用Agent处理（使用异步调用以支持异步工具）
         logger.info("  调用Agent处理...")
-        result = agent.invoke({
+        result = await agent.ainvoke({
             "messages": [
                 HumanMessage(content=user_message)
             ]
@@ -116,7 +112,13 @@ def agent_executor_node(state: AgentState) -> Dict[str, Any]:
         # 提取最终回复
         if result.get("messages"):
             final_message = result["messages"][-1]
-            final_response = final_message.get("content", str(final_message))
+            # AIMessage 是 Pydantic 对象，使用 .content 属性而不是 .get() 方法
+            if hasattr(final_message, 'content'):
+                final_response = final_message.content
+            elif isinstance(final_message, dict):
+                final_response = final_message.get("content", str(final_message))
+            else:
+                final_response = str(final_message)
         else:
             final_response = "抱歉，我无法处理您的请求。"
 

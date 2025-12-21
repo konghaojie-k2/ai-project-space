@@ -40,6 +40,7 @@ import { formatFileSize, cn } from '@/lib/utils'
 import { PROJECT_STAGES } from '@/lib/constants/project-stages'
 import { projectSync } from '@/lib/services/project-sync'
 import ProjectMembersTooltip from '@/components/features/ProjectMembersTooltip'
+import { getTagById, getTagColor, PREDEFINED_TAGS } from '@/lib/constants/file-tags'
 
 interface Project {
   id: string
@@ -323,7 +324,7 @@ const fetchProjectFiles = async (projectId: string): Promise<FileItem[]> => {
                     file.uploaded_by === '管理员' ? '管理员' : 
                     (file.uploaded_by || '管理员'), // 映射用户信息
         stage: file.stage,
-        tags: [], // 可以从file.tags获取
+        tags: file.tags || [], // 从file.tags获取，如果不存在则使用空数组
         url: `/api/v1/files/${file.id}/download`, // 下载链接
         // 根据uploaded_by判断文件来源
         source: (file.uploaded_by === 'AI助手' || 
@@ -415,6 +416,28 @@ const fetchProjectStats = async (projectId: string) => {
   }
 }
 
+// 获取所有标签（预定义 + 自定义）
+const getAllTags = () => {
+  let customTags: any[] = [];
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('custom-tags');
+      if (stored) {
+        customTags = JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('加载自定义标签失败:', error);
+    }
+  }
+  return [...PREDEFINED_TAGS, ...customTags];
+};
+
+// 根据tag ID获取tag信息
+const getTagInfo = (tagId: string) => {
+  const allTags = getAllTags();
+  return allTags.find(tag => tag.id === tagId);
+};
+
 export default function ProjectDetailPage() {
   const params = useParams()
   const projectId = params.id as string
@@ -445,9 +468,6 @@ export default function ProjectDetailPage() {
   const [projectStats, setProjectStats] = useState({ fileCount: 0, totalSize: 0 })
   const [isLoading, setIsLoading] = useState(true)
   
-  // 文件索引状态
-  const [isIndexing, setIsIndexing] = useState(false)
-  const [indexStats, setIndexStats] = useState({ indexed: 0, total: 0 })
 
   // 设置客户端水合状态（只在客户端执行）
   useEffect(() => {
@@ -468,8 +488,17 @@ export default function ProjectDetailPage() {
       return;
     }
 
+    let isRequesting = false // 防止重复请求
+
     const loadData = async () => {
+      // 防止重复请求
+      if (isRequesting) {
+        console.log('⏳ 文件列表正在加载中，跳过重复请求')
+        return
+      }
+
       console.log('📁 开始加载项目详情数据:', { projectId });
+      isRequesting = true
       setIsLoading(true)
       
       // 从同步服务获取项目信息
@@ -506,6 +535,7 @@ export default function ProjectDetailPage() {
         }
         
         // 更新项目统计到同步服务（使用已有数据，不调用API）
+        // 注意：这会触发notify，但不会导致重新加载文件列表
         projectSync.updateProject(projectId, {
           fileCount: stats.fileCount,
           totalSize: stats.totalSize
@@ -518,21 +548,35 @@ export default function ProjectDetailPage() {
         setFilteredFiles([])
         setProjectStats({ fileCount: 0, totalSize: 0 })
       } finally {
+        isRequesting = false
         setIsLoading(false)
       }
     }
     
     loadData()
 
-    // 订阅项目数据变化
+    // 订阅项目数据变化（只更新项目信息，不重新加载文件列表）
+    // 使用防抖避免频繁触发
+    let debounceTimer: NodeJS.Timeout | null = null
     const unsubscribe = projectSync.subscribe(() => {
-      const updatedProject = projectSync.getProjectById(projectId)
-      if (updatedProject) {
-        setProject(updatedProject)
+      // 防抖：500ms内只执行一次
+      if (debounceTimer) {
+        clearTimeout(debounceTimer)
       }
+      debounceTimer = setTimeout(() => {
+        const updatedProject = projectSync.getProjectById(projectId)
+        if (updatedProject) {
+          setProject(updatedProject)
+        }
+      }, 500)
     })
     
-    return unsubscribe
+    return () => {
+      unsubscribe()
+      if (debounceTimer) {
+        clearTimeout(debounceTimer)
+      }
+    }
   }, [projectId, isHydrated]) // 添加isHydrated依赖，确保水合完成后重新执行
 
   // 当项目数据更新时，更新当前项目
@@ -763,8 +807,31 @@ export default function ProjectDetailPage() {
       });
 
       if (response.ok) {
-        // 重新获取文件列表以确保数据同步
-        await syncAfterFileOperation()
+        // 更新成功后，直接更新本地状态，避免重复请求
+        const updatedFile = await response.json()
+        setFiles(prevFiles => 
+          prevFiles.map(file => 
+            file.id === editingFile.id 
+              ? { ...file, name: updatedFile.original_name || editName.trim(), stage: editStage }
+              : file
+          )
+        )
+        setFilteredFiles(prevFiles => 
+          prevFiles.map(file => 
+            file.id === editingFile.id 
+              ? { ...file, name: updatedFile.original_name || editName.trim(), stage: editStage }
+              : file
+          )
+        )
+        
+        // 更新localStorage
+        const updatedFiles = files.map(file => 
+          file.id === editingFile.id 
+            ? { ...file, name: updatedFile.original_name || editName.trim(), stage: editStage }
+            : file
+        )
+        saveFilesToStorage(projectId, updatedFiles)
+        
         setShowEditModal(false)
         setEditingFile(null)
         setEditName('')
@@ -879,21 +946,61 @@ export default function ProjectDetailPage() {
 
   const handleTagFile = (file: FileItem) => {
     setFileToTag(file)
-    setSelectedTags(file.tags)
+    // 过滤掉不存在的tag（已删除的自定义tag或无效tag）
+    const validTags = file.tags.filter(tagId => getTagInfo(tagId) !== undefined)
+    setSelectedTags(validTags)
     setShowTagManager(true)
   }
 
-  const handleTagsUpdate = (tags: string[]) => {
-    if (fileToTag) {
-      setFiles(prev => prev.map(f => 
-        f.id === fileToTag.id 
-          ? { ...f, tags }
-          : f
-      ))
+  const handleTagsUpdate = async (tags: string[]) => {
+    if (!fileToTag) {
+      return
     }
-    setShowTagManager(false)
-    setFileToTag(null)
-    setSelectedTags([])
+
+    try {
+      const { apiPut } = await import('@/lib/api');
+      const response = await apiPut(`/api/v1/files/${fileToTag.id}`, {
+        tags: tags
+      });
+
+      if (response.ok) {
+        const updatedFile = await response.json();
+        
+        // 更新本地状态
+        setFiles(prev => prev.map(f => 
+          f.id === fileToTag.id 
+            ? { ...f, tags: updatedFile.tags || tags }
+            : f
+        ));
+        setFilteredFiles(prev => prev.map(f => 
+          f.id === fileToTag.id 
+            ? { ...f, tags: updatedFile.tags || tags }
+            : f
+        ));
+        
+        // 更新localStorage
+        const updatedFiles = files.map(f => 
+          f.id === fileToTag.id 
+            ? { ...f, tags: updatedFile.tags || tags }
+            : f
+        );
+        saveFilesToStorage(projectId, updatedFiles);
+        
+        // 通知项目同步服务更新
+        projectSync.updateProjectFileStats(projectId);
+        
+        setShowTagManager(false);
+        setFileToTag(null);
+        setSelectedTags([]);
+      } else {
+        const errorData = await response.json();
+        console.error('标签更新失败详情:', errorData);
+        alert(`标签更新失败: ${errorData.detail || errorData.message || response.statusText}`);
+      }
+    } catch (error) {
+      console.error('标签更新失败:', error);
+      alert('标签更新失败，请稍后重试');
+    }
   }
 
 
@@ -903,40 +1010,6 @@ export default function ProjectDetailPage() {
     window.location.href = `/dashboard/chat?project=${projectId}&name=${encodeURIComponent(project?.name || '')}`
   }
 
-  const handleBatchIndex = async () => {
-    if (!projectId || isIndexing) return
-    
-    setIsIndexing(true)
-    try {
-      const { apiPost } = await import('@/lib/api');
-      const response = await apiPost('/api/v1/files/batch-index', {
-        project_id: projectId,
-        force_reindex: false
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        console.log('批量索引完成:', result)
-        
-        // 更新索引统计
-        setIndexStats({
-          indexed: result.indexed_count || 0,
-          total: result.total_processed || 0
-        })
-        
-        // 显示成功提示
-        alert(`文件索引完成！成功索引 ${result.indexed_count} 个文件`)
-      } else {
-        console.error('批量索引失败:', response.statusText)
-        alert('文件索引失败，请稍后重试')
-      }
-    } catch (error) {
-      console.error('批量索引错误:', error)
-      alert('文件索引失败，请稍后重试')
-    } finally {
-      setIsIndexing(false)
-    }
-  }
 
   // 如果项目已归档，显示无法访问的提示
   if (isHydrated && project?.status === 'archived') {
@@ -1017,16 +1090,6 @@ export default function ProjectDetailPage() {
             >
               <ChatBubbleLeftRightIcon className="h-5 w-5 mr-2" />
               AI助手
-            </Button>
-            {/* 文件索引状态和批量索引按钮 */}
-            <Button
-              variant="outline"
-              onClick={handleBatchIndex}
-              disabled={isIndexing}
-              className="flex items-center"
-            >
-              <CpuChipIcon className="h-5 w-5 mr-2" />
-              {isIndexing ? '索引中...' : '智能索引'}
             </Button>
             <Button onClick={() => setShowUploadModal(true)}>
               <CloudArrowUpIcon className="h-5 w-5 mr-2" />
@@ -1230,15 +1293,34 @@ export default function ProjectDetailPage() {
                   </div>
                   
                   {/* 标签信息 */}
-                  {file.tags.length > 0 && (
-                    <div className="flex items-center space-x-1 mt-2">
-                      <TagIcon className="h-3 w-3 text-gray-400" />
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {file.tags[0]}
-                        {file.tags.length > 1 && ` +${file.tags.length - 1}`}
-                      </span>
-                    </div>
-                  )}
+                  {file.tags.length > 0 && (() => {
+                    // 过滤掉不存在的tag（已删除的自定义tag或无效tag）
+                    const validTags = file.tags.filter(tagId => getTagInfo(tagId) !== undefined);
+                    if (validTags.length === 0) return null;
+                    
+                    return (
+                      <div className="flex items-center flex-wrap gap-1.5 mt-2">
+                        {validTags.slice(0, 3).map((tagId) => {
+                          const tagInfo = getTagInfo(tagId);
+                          if (!tagInfo) return null; // 双重检查
+                          return (
+                            <span
+                              key={tagId}
+                              className={`px-2 py-0.5 rounded-md text-xs font-medium ${tagInfo.color} border border-opacity-20 shadow-sm`}
+                              title={tagInfo.name}
+                            >
+                              {tagInfo.name}
+                            </span>
+                          );
+                        })}
+                        {validTags.length > 3 && (
+                          <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
+                            +{validTags.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* 嵌入状态指示器 */}
                 </div>
@@ -1286,9 +1368,34 @@ export default function ProjectDetailPage() {
                             <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                               {file.name}
                             </h3>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                              {formatFileSize(file.size)}
-                            </p>
+                            {file.tags.length > 0 && (() => {
+                              // 过滤掉不存在的tag（已删除的自定义tag或无效tag）
+                              const validTags = file.tags.filter(tagId => getTagInfo(tagId) !== undefined);
+                              if (validTags.length === 0) return null;
+                              
+                              return (
+                                <div className="flex items-center flex-wrap gap-1 mt-1">
+                                  {validTags.slice(0, 2).map((tagId) => {
+                                    const tagInfo = getTagInfo(tagId);
+                                    if (!tagInfo) return null; // 双重检查
+                                    return (
+                                      <span
+                                        key={tagId}
+                                        className={`px-1.5 py-0.5 rounded text-xs font-medium ${tagInfo.color} border border-opacity-20`}
+                                        title={tagInfo.name}
+                                      >
+                                        {tagInfo.name}
+                                      </span>
+                                    );
+                                  })}
+                                  {validTags.length > 2 && (
+                                    <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
+                                      +{validTags.length - 2}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       </td>

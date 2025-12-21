@@ -468,6 +468,7 @@ export default function TeamPage() {
       <DashboardPageHeader
         title="团队管理"
         description="管理团队成员权限和项目团队"
+        showBackButton={false}
         actions={
           <Button
             onClick={() => activeTab === 'users' ? loadUsers() : loadProjects()}

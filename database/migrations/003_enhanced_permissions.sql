@@ -106,17 +106,17 @@ CREATE OR REPLACE FUNCTION public.get_effective_project_permissions(
 RETURNS jsonb AS $$
 DECLARE
     user_role text;
-    is_creator boolean;
+    created_by uuid;
     is_public boolean;
     base_permissions jsonb;
 BEGIN
-    -- 检查是否为项目创建者
-    SELECT created_by, is_public INTO is_creator, is_public
-    FROM public.projects
-    WHERE id = project_uuid;
+    -- 检查是否为项目创建者（使用表别名避免列歧义）
+    SELECT p.created_by, p.is_public INTO created_by, is_public
+    FROM public.projects p
+    WHERE p.id = project_uuid;
 
     -- 如果是项目创建者，返回所有权限
-    IF is_creator = user_uuid THEN
+    IF created_by = user_uuid THEN
         RETURN '{
             "read": true,
             "write": true,

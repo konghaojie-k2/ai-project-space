@@ -121,6 +121,92 @@ async def direct_supabase_query(
         logger.error(f"直接查询异常: {e}")
         return []
 
+async def direct_supabase_update(
+    table: str,
+    update_data: Dict[str, Any],
+    filters: Dict[str, Any],
+    use_service_key: bool = True
+) -> Optional[List[Dict]]:
+    """
+    直接通过 HTTP PATCH 调用 Supabase REST API 更新数据，绕过 SDK
+    
+    这种方式可以复用 HTTP/2 连接，性能更好
+    
+    Args:
+        table: 表名
+        update_data: 要更新的数据字典
+        filters: 过滤条件 {"column": "value"} 会转换为 column=eq.value
+        use_service_key: 是否使用服务密钥
+        
+    Returns:
+        更新后的数据列表，失败返回None
+    """
+    try:
+        client = await get_global_async_http_client()
+        
+        # 构建 URL
+        base_url = settings.SUPABASE_URL.rstrip('/')
+        url = f"{base_url}/rest/v1/{table}"
+        
+        # 构建查询参数（用于WHERE条件）
+        params = {}
+        if filters:
+            for key, value in filters.items():
+                params[key] = f"eq.{value}"
+        
+        # 构建请求头
+        api_key = settings.SUPABASE_SERVICE_KEY if use_service_key else settings.SUPABASE_KEY
+        headers = {
+            "apikey": api_key,
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"  # 返回更新后的数据
+        }
+        
+        # 发送 PATCH 请求
+        response = await client.patch(url, params=params, json=update_data, headers=headers)
+        
+        if response.status_code in [200, 204]:
+            if response.status_code == 204:
+                # 204 No Content，虽然设置了Prefer: return=representation，但可能还是返回204
+                # 返回空列表，调用者需要重新查询
+                logger.debug(f"直接更新返回204 No Content，调用者需要重新查询: {table}")
+                return []
+            # 200 OK，尝试解析JSON
+            try:
+                json_data = response.json()
+                # 如果返回的是列表，直接返回
+                if isinstance(json_data, list):
+                    return json_data
+                # 如果返回的是单个对象，包装成列表
+                elif isinstance(json_data, dict):
+                    return [json_data]
+                else:
+                    logger.warning(f"直接更新返回了意外的数据类型: {type(json_data)}")
+                    return []
+            except Exception as e:
+                logger.error(f"解析更新响应JSON失败: {e}")
+                return []
+        else:
+            # 400错误可能是字段不存在，需要特殊处理
+            if response.status_code == 400:
+                error_text = response.text
+                # 检查是否是字段不存在的错误
+                if "PGRST204" in error_text or "column" in error_text.lower() or "not find" in error_text.lower():
+                    logger.debug(f"直接更新返回400（字段不存在）: {error_text}")
+                    # 抛出ValueError，让调用者知道是字段不存在的问题
+                    # 这个异常会被外层捕获，但我们需要让它传播出去
+                    raise ValueError(f"字段不存在: {error_text}")
+            logger.error(f"直接更新失败: {response.status_code} - {response.text}")
+            return None
+            
+    except ValueError:
+        # ValueError是字段不存在的错误，需要传播给调用者
+        raise
+    except Exception as e:
+        logger.error(f"直接更新异常: {e}")
+        return None
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -1521,6 +1607,7 @@ class SupabaseService:
     async def create_chat_session(self, session_data: Dict) -> Optional[Dict]:
         """
         创建聊天会话
+        优先使用admin_client（Service Key）绕过RLS限制
 
         Args:
             session_data: 会话数据字典
@@ -1528,11 +1615,21 @@ class SupabaseService:
         Returns:
             创建的会话记录字典，创建失败返回None
         """
-        if not self.client:
+        # 优先使用admin_client（Service Key）绕过RLS限制
+        client_to_use = None
+        
+        if self.admin_client_available:
+            client_to_use = self.admin_client
+            logger.debug("✅ 使用admin_client创建聊天会话（Service Key，绕过RLS）")
+        elif self.client:
+            client_to_use = self.client
+            logger.warning("⚠️ admin_client不可用，使用client创建聊天会话（可能受RLS策略限制）")
+        else:
+            logger.error("❌ Supabase客户端未初始化，无法创建聊天会话")
             return None
 
         try:
-            response = await run_supabase_query(lambda: self.client.table('chat_sessions').insert({
+            response = await run_supabase_query(lambda: client_to_use.table('chat_sessions').insert({
                 **session_data,
                 'created_at': datetime.utcnow().isoformat(),
                 'updated_at': datetime.utcnow().isoformat()
@@ -1548,6 +1645,7 @@ class SupabaseService:
     async def create_chat_message(self, message_data: Dict) -> Optional[Dict]:
         """
         创建聊天消息
+        优先使用admin_client（Service Key）绕过RLS限制
 
         Args:
             message_data: 消息数据字典
@@ -1555,11 +1653,21 @@ class SupabaseService:
         Returns:
             创建的消息记录字典，创建失败返回None
         """
-        if not self.client:
+        # 优先使用admin_client（Service Key）绕过RLS限制
+        client_to_use = None
+        
+        if self.admin_client_available:
+            client_to_use = self.admin_client
+            logger.debug("✅ 使用admin_client创建聊天消息（Service Key，绕过RLS）")
+        elif self.client:
+            client_to_use = self.client
+            logger.warning("⚠️ admin_client不可用，使用client创建聊天消息（可能受RLS策略限制）")
+        else:
+            logger.error("❌ Supabase客户端未初始化，无法创建聊天消息")
             return None
 
         try:
-            response = await run_supabase_query(lambda: self.client.table('chat_messages').insert({
+            response = await run_supabase_query(lambda: client_to_use.table('chat_messages').insert({
                 **message_data,
                 'created_at': datetime.utcnow().isoformat()
             }).execute())
@@ -1651,6 +1759,7 @@ class SupabaseService:
     async def update_chat_session(self, session_id: str, update_data: Dict) -> Optional[Dict]:
         """
         更新聊天会话
+        优先使用admin_client（Service Key）绕过RLS限制
 
         Args:
             session_id: 会话ID
@@ -1659,11 +1768,19 @@ class SupabaseService:
         Returns:
             更新后的会话信息字典，更新失败返回None
         """
-        if not self.client:
+        # 优先使用admin_client（Service Key）绕过RLS限制
+        client_to_use = None
+        
+        if self.admin_client_available:
+            client_to_use = self.admin_client
+        elif self.client:
+            client_to_use = self.client
+        else:
+            logger.error("❌ Supabase客户端未初始化，无法更新聊天会话")
             return None
 
         try:
-            response = await run_supabase_query(lambda: self.client.table('chat_sessions').update({
+            response = await run_supabase_query(lambda: client_to_use.table('chat_sessions').update({
                 **update_data,
                 'updated_at': datetime.utcnow().isoformat()
             }).eq('id', session_id).execute())
@@ -1815,7 +1932,8 @@ class SupabaseService:
         self,
         user_id: str,
         project_id: str,
-        required_permission: str = 'read'
+        required_permission: str = 'read',
+        is_superuser: bool = False
     ) -> bool:
         """
         检查用户是否有特定项目权限 (使用新的权限系统)
@@ -1824,12 +1942,17 @@ class SupabaseService:
             user_id: 用户ID
             project_id: 项目ID
             required_permission: 需要的权限类型 ('read', 'write', 'delete', 'manage_members', 'manage_settings')
+            is_superuser: 是否是超级管理员
 
         Returns:
             是否有权限
         """
         if not self.client:
             return False
+
+        # 超级管理员拥有所有权限
+        if is_superuser:
+            return True
 
         try:
             response = self.client.rpc(

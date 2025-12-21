@@ -157,8 +157,9 @@ async def add_project_member(
             raise HTTPException(status_code=401, detail="用户ID无效")
         
         # 检查用户是否有添加成员的权限
+        is_superuser = current_user.get('is_superuser', False)
         has_permission = await supabase_service.has_project_permission(
-            user_id, project_id, 'write'
+            user_id, project_id, 'write', is_superuser=is_superuser
         )
         
         if not has_permission:
@@ -244,8 +245,9 @@ async def update_project_member(
             raise HTTPException(status_code=401, detail="用户ID无效")
         
         # 检查当前用户是否有更新成员的权限
+        is_superuser = current_user.get('is_superuser', False)
         has_permission = await supabase_service.has_project_permission(
-            current_user_id, project_id, 'write'
+            current_user_id, project_id, 'write', is_superuser=is_superuser
         )
         
         if not has_permission:
@@ -307,8 +309,9 @@ async def remove_project_member(
             raise HTTPException(status_code=401, detail="用户ID无效")
         
         # 检查当前用户是否有移除成员的权限
+        is_superuser = current_user.get('is_superuser', False)
         has_permission = await supabase_service.has_project_permission(
-            current_user_id, project_id, 'write'
+            current_user_id, project_id, 'write', is_superuser=is_superuser
         )
         
         if not has_permission:
